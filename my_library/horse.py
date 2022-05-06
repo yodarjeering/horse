@@ -32,7 +32,251 @@ import seaborn as sns
 from hyperopt import hp, tpe, Trials, fmin,STATUS_OK
 import fasttext as ft
 
+place_dict = {
+    '札幌':'01',  '函館':'02',  '福島':'03',  '新潟':'04',  '東京':'05', 
+    '中山':'06',  '中京':'07',  '京都':'08',  '阪神':'09',  '小倉':'10'
+}
 
+race_type_dict = {
+    '芝': '芝', 'ダ': 'ダート', '障': '障害'
+}
+
+
+
+def split_data(df, test_size=0.2, rank_learning=True):
+    """
+    データを学習データと, 訓練データに分ける関数
+    """
+    df_ = df.copy()
+    if not rank_learning:
+        df_['rank'] = df_['rank'].map(lambda x:1 if x<4 else 0)
+    sorted_id_list = df_.sort_values("date").index.unique()
+    train_id_list = sorted_id_list[: round(len(sorted_id_list) * (1 - test_size))]
+    test_id_list = sorted_id_list[round(len(sorted_id_list) * (1 - test_size)) :]
+    train = df_.loc[train_id_list]#.drop(['date'], axis=1)
+    test = df_.loc[test_id_list]#.drop(['date'], axis=1)
+    return train, test
+
+def rus_data(df, test_size=0.2):
+    train, test = split_data(df,test_size=test_size)
+    x_train = train.drop(['rank', 'date','単勝'], axis=1)
+    y_train = train['rank']
+    x_test = test.drop(['rank', 'date','単勝'], axis=1)
+    y_test = test['rank']
+    
+    rus = RandomUnderSampler(random_state=0)
+    x_resampled, y_resampled = rus.fit_resample(x_train, y_train)
+    return x_resampled, y_resampled, x_test, y_test
+
+def load_csv(load_path):
+    df = pd.read_csv(load_path, index_col=0)
+    return df
+
+def gain(return_func, x_, n_samples=100,lower=50,t_range=[0.5,3.5]):
+    gain = {}
+    for i in range(n_samples):
+        threshold = t_range[1] * (i/n_samples) + t_range[0] *(1-i/n_samples)
+        n_bets, return_rate, n_hits,std = return_func(x_, threshold)
+        if n_bets > lower:
+            gain[threshold] = {'return_rate':return_rate,'n_hits':n_hits,'std':std,'n_bets':n_bets}
+    return pd.DataFrame(gain).T
+
+
+
+def plot(g,label=''):
+    plt.fill_between(g.index,y1 = g['return_rate'] - g['std'],y2=g['return_rate']+g['std'],alpha=0.3)
+    plt.plot(g.index,g['return_rate'],label=label)
+    plt.grid(True)
+    
+def update_data(old, new):
+    """
+    Parameters:
+    ----------
+    old : pandas.DataFrame
+        古いデータ
+    new : pandas.DataFrame
+        新しいデータ
+    """
+
+    filtered_old = old[~old.index.isin(new.index)]
+    return pd.concat([filtered_old, new])
+
+def scrape_race_results(race_id_list, pre_race_results={}):
+    race_results = pre_race_results
+    for race_id in race_id_list:
+        if race_id in race_results.keys():
+            continue
+        try:
+            time.sleep(0.5)
+            url = "https://db.netkeiba.com/race/" + race_id
+            race_results[race_id] = pd.read_html(url)[0]
+        except IndexError:
+            continue
+        except Exception as e:
+            print(e)
+            break
+        except:
+            break
+    return race_results
+
+def plot_importances(xgb_model, x_test):
+    importances = pd.DataFrame(
+    {'features' : x_test.columns, 'importances' : xgb_model.feature_importances_})
+    print(importances.sort_values('importances', ascending=False)[:20])
+    
+def xgb_pred(x_train, y_train, x_test, y_test):
+    param_dist = {'objective':'binary:logistic',
+                  'n_estimators':14,
+                  'use_label_encoder':False,
+                 'max_depth':4,
+                 'random_state':100}
+    
+    best_params = {'booster': 'gbtree', 
+                   'objective': 'binary:logistic',
+                   'use_label_encoder':False,
+                   'eval_metric': 'rmse', 
+                   'random_state': 100, 
+                   'use_label_encoder':False,
+                   'eta': 0.13449222415941048,
+                   'max_depth': 3,
+                   'lambda': 0.7223936363734638, 
+                   'n_estimators': 14, 
+                   'reg_alpha': 0.7879044553842869,
+                   'reg_lambda': 0.7780344172793093,
+                   'importance_type': 'gain'}
+    xgb_model = xgb.XGBClassifier(**best_params)
+    hr_pred = xgb_model.fit(x_train.astype(float), np.array(y_train), eval_metric='logloss').predict(x_test.astype(float))
+    print("---------------------")
+    y_proba_train = xgb_model.predict_proba(x_train)[:,1]
+    y_proba = xgb_model.predict_proba(x_test)[:,1]
+    print('AUC train:',roc_auc_score(y_train,y_proba_train))    
+    print('AUC test :',roc_auc_score(y_test,y_proba))
+    print(classification_report(np.array(y_test), hr_pred))
+    xgb.plot_importance(xgb_model) 
+    plot_importances(xgb_model, x_test)
+    return xgb_model
+
+def lgb_pred(x_train, y_train, x_test, y_test):
+    param_dist = {
+        'objective' : 'binary',
+          'random_state':100,
+                 }
+    best_params = {'objective': 'binary',
+     'metric': 'l1',
+     'verbosity': -1,
+     'boosting_type': 'gbdt',
+     'feature_pre_filter': False,
+     'lambda_l1': 0.001101158293733924,
+     'lambda_l2': 7.419556660834531e-07,
+     'num_leaves': 254,
+     'feature_fraction': 1.0,
+     'bagging_fraction': 0.9773374137350906,
+     'bagging_freq': 1,
+     'min_child_samples': 5,
+    #  'num_iterations': 200,
+    #  'early_stopping_round': 50,
+     'categorical_column': [4,
+                            5,94,95,96,97,  98,  99,  100,  101,  102,  103,  104,  105,  106,  107,  108,  109,  110,  111,  112,  113,  114,  115,  116,  117,  118,  119,  120,  121,  122,  123,  124,  125,  126,  127,  128,  129,  130,  131,  132,  133,  134,  135,  136,  137,  138,  139,  140,  141,  142,  143,  144,  145,  146,  147,  148,  149,  150,  151,  152,  153,  154,
+      155]
+                  }
+
+    lgb_model = lgb.LGBMClassifier(**best_params)
+    hr_pred = lgb_model.fit(x_train.astype(float), np.array(y_train), eval_metric='logloss').predict(x_test.astype(float))
+    print("---------------------")
+    y_proba_train = lgb_model.predict_proba(x_train.astype(float))[:,1]
+    y_proba = lgb_model.predict_proba(x_test.astype(float))[:,1]
+    print('AUC train:',roc_auc_score(y_train,y_proba_train))    
+    print('AUC test :',roc_auc_score(y_test,y_proba))
+    print(classification_report(np.array(y_test), hr_pred))
+    plt.clf()
+    lgb.plot_importance(lgb_model) 
+    plot_importances(lgb_model, x_test)
+    return lgb_model
+
+def make_data(data_,test_rate=0.8,is_rus=True):
+    data_ = data_.sort_values('date')
+    x_ = data_.drop(['rank','date','単勝'],axis=1)
+    y_ = data_['rank']
+
+    test_rate = int(test_rate*len(x_))
+    x_train, x_test = x_.iloc[:test_rate],x_.iloc[test_rate:]
+    y_train, y_test = y_.iloc[:test_rate],y_.iloc[test_rate:]
+    if is_rus:
+        rus = RandomUnderSampler(random_state=0)
+        x_resampled, y_resampled = rus.fit_resample(x_train, y_train)
+        return x_resampled, y_resampled, x_test, y_test
+    else:
+        return x_train,y_train,x_test,y_test
+
+def make_check_data(data_,test_rate=0.8):
+    data_ = data_.sort_values('date')
+    x_ = data_.drop(['rank','date'],axis=1)
+    y_ = data_['rank']
+
+    test_rate = int(test_rate*len(x_))
+    x_train, x_check = x_.iloc[:test_rate],x_.iloc[test_rate:]
+    y_train, y_check = y_.iloc[:test_rate],y_.iloc[test_rate:]
+
+    return x_check,y_check
+
+def grid_search(x_train,y_train,x_test,y_test):
+    trains = xgb.DMatrix(x_train.astype(float), label=y_train)
+    tests = xgb.DMatrix(x_test.astype(float), label=y_test)
+
+    base_params = {
+        'booster': 'gbtree',
+        'objective':'binary:logistic',
+        'eval_metric': 'rmse',
+        'random_state':100,
+        'use_label_encoder':False
+    }
+
+    watchlist = [(trains, 'train'), (tests, 'eval')]
+    tmp_params = copy.deepcopy(base_params)
+    
+#     インナー関数
+    def optimizer(trial):
+        eta = trial.suggest_uniform('eta', 0.01, 0.3)
+        max_depth = trial.suggest_int('max_depth', 3, 20)
+        __lambda = trial.suggest_uniform('lambda', 0.7, 2)
+        n_estimators = trial.suggest_int('n_estimators', 3, 20)
+        learning_rate = trial.suggest_uniform('lambda', 0.01, 1)
+        reg_alpha = trial.suggest_uniform('reg_alpha', 0.01, 1)
+        reg_lambda = trial.suggest_uniform('reg_lambda', 0.01, 1)
+        importance_type = trial.suggest_categorical('importance_type',
+                                                    ['gain', 'weight', 'cover','total_gain','total_cover'])
+
+        tmp_params['eta'] = eta
+        tmp_params['max_depth'] = max_depth
+        tmp_params['lambda'] = __lambda
+        tmp_params['n_estimators'] = n_estimators
+        tmp_params['learning_rate'] = learning_rate
+        tmp_params['reg_alpha'] = reg_alpha
+        tmp_params['reg_lambda'] = reg_lambda
+        tmp_params['importance_type'] = importance_type
+        model = xgb.train(tmp_params, trains, num_boost_round=50)
+        predicts = model.predict(tests)
+        r2 = r2_score(y_test, predicts)
+        print(f'#{trial.number}, Result: {r2}, {trial.params}')
+        return r2
+    
+def predict(race_id,p,hr,r,return_tables,lgb_clf,date):
+    data =  ShutubaTable.scrape([str(race_id)], date)
+    st = ShutubaTable(data)
+    st.preprocessing()
+    st.merge_horse_results(hr)
+    st.merge_peds(p.peds_e)
+    st.process_categorical(r.le_horse, r.le_jockey, r.data_pe)
+    return_tables.rename(columns={'0':0,'1':1,'2':2,'3':3},inplace=True)
+    me_st = ModelEvaluator(lgb_clf, return_tables)
+
+    
+    #予測
+    scores = me_st.predict_proba(st.data_c.drop(['date'],axis=1),train=False)
+    pred = st.data_c[['馬番']].copy()
+    pred['scores'] = scores
+    print(pred.loc[race_id].sort_values('scores',ascending=False))
+    
 
 
 class HorseResults:
@@ -108,6 +352,16 @@ class HorseResults:
         df['first_to_rank'] = df['first_corner'] - df['着順']
         df['first_to_final'] = df['first_corner'] - df['final_corner']
         
+        place_dict = {
+            '札幌':'01',  '函館':'02',  '福島':'03',  '新潟':'04',  '東京':'05', 
+            '中山':'06',  '中京':'07',  '京都':'08',  '阪神':'09',  '小倉':'10'
+        }
+
+        race_type_dict = {
+            '芝': '芝', 'ダ': 'ダート', '障': '障害'
+        }
+
+
         #開催場所
         df['開催'] = df['開催'].str.extract(r'(\D+)')[0].map(place_dict).fillna('11')
         #race_type
@@ -1798,8 +2052,8 @@ class LearnLGBM():
 class Predictor(LearnLGBM):
 
 
-    def __init__(self,race_id_list):
-        super(LearnLGBM, self).__init__()
+    def __init__(self,peds,results,horse_results,race_id_list):
+        super(LearnLGBM, self).__init__(peds,results,horse_results)
         self.race_id_list = race_id_list
 
 
