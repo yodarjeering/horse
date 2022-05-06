@@ -1733,24 +1733,25 @@ class RankSimulater(Simulater):
         
         
     def calc_wide(self,data_c,return_tables,odds=2.0,bet=100,is_long=True):
-        acc_dict = {'単勝':0,'複勝':0,'ワイド':0}
-        return_dict = {'単勝':0,'複勝':0,'ワイド':0}
-        wide_list = []
-        race_id_list = data_c.index.tolist()
+        pass
+        # acc_dict = {'単勝':0,'複勝':0,'ワイド':0}
+        # return_dict = {'単勝':0,'複勝':0,'ワイド':0}
+        # wide_list = []
+        # race_id_list = data_c.index.tolist()
         
-        for i in range(len(df_[df_[0]=='ワイド'][1].str.split(' ')[0])//2):
-            if set([pred_1,pred_2])==set(df_[df_[0]=='ワイド'][1].str.split(' ')[0][i:i+2]):
-                if i!=0:
-                    return_index = i-1
-                else:
-                    return_index = i
+        # for i in range(len(df_[df_[0]=='ワイド'][1].str.split(' ')[0])//2):
+        #     if set([pred_1,pred_2])==set(df_[df_[0]=='ワイド'][1].str.split(' ')[0][i:i+2]):
+        #         if i!=0:
+        #             return_index = i-1
+        #         else:
+        #             return_index = i
 
-            profit = int(df_[df_[0]=='ワイド'][2].str.split('円')[0][return_index].replace(',',''))
-            return_dict['ワイド'] += profit
-            print("profit",profit)
-            acc_dict['ワイド'] += 1
-            wide_list.append(race_id[-2:])
-            break
+        #     profit = int(df_[df_[0]=='ワイド'][2].str.split('円')[0][return_index].replace(',',''))
+        #     return_dict['ワイド'] += profit
+        #     print("profit",profit)
+        #     acc_dict['ワイド'] += 1
+        #     wide_list.append(race_id[-2:])
+        #     break
             
             
     def calc_wide_3box(self,data_c,return_tables,odds=2.0,bet=100,is_long=True):
@@ -2053,7 +2054,8 @@ class Predictor(LearnLGBM):
 
 
     def __init__(self,peds,results,horse_results,race_id_list):
-        super(LearnLGBM, self).__init__(peds,results,horse_results)
+        super(Predictor, self).__init__(peds,results,horse_results)
+        # super(Predictor, self).__init__()
         self.race_id_list = race_id_list
 
 
@@ -2061,14 +2063,21 @@ class Predictor(LearnLGBM):
         race_id_list = self.race_id_list.copy()
         data =  ShutubaTable.scrape(race_id_list, self.date)
         self.data = data
+        peds = self.peds.copy()
+        results = self.results.copy()
+        horse_results = self.horse_results.copy()
+
 
         nopeds_id_list = []
         for ind in data['horse_id'].astype(int).unique():
             if ind not in peds.index:
                 nopeds_id_list.append(str(ind))
 
-        peds_tmp = Peds.scrape(nopeds_id_list)
-        new_peds = update_data(peds, peds_tmp)
+        if len(nopeds_id_list)!=0:
+            peds_tmp = Peds.scrape(nopeds_id_list)
+            new_peds = update_data(peds, peds_tmp)
+        else:
+            new_peds = peds.copy()
         self.peds = new_peds.copy()
         path_ft = '/Users/rince/Desktop/Horse/code/horse/peds_ft.txt'
         new_peds.to_csv(path_ft,header=False,index=False,sep=',')
@@ -2104,8 +2113,9 @@ class Predictor(LearnLGBM):
         st.merge_horse_results(self.hr)
         st.merge_peds(self.pe.peds_vec)
         st.process_categorical(self.r.le_horse, self.r.le_jockey, self.r.data_pe)
-        sl = RankSimulater(self.lgb_rank)
-        sl.return_pred_table(st.data_c)
+        sl = RankSimulater(self.model)
+        pred_table = sl.return_pred_table(st.data_c)
+        print(pred_table)
             
 
     def show_results_today(self):
@@ -2114,6 +2124,6 @@ class Predictor(LearnLGBM):
         st.merge_horse_results(self.hr)
         st.merge_peds(self.pe.peds_vec)
         st.process_categorical(self.r.le_horse, self.r.le_jockey, self.r.data_pe)
-        sl = RankSimulater(self.lgb_rank)
+        sl = RankSimulater(self.model)
         sl.return_table_today(self.race_id_list)
         sl.show_results_today(st ,self.race_id_list)
