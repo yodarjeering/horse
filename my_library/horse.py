@@ -2055,7 +2055,6 @@ class Predictor(LearnLGBM):
 
     def __init__(self,peds,results,horse_results,race_id_list):
         super(Predictor, self).__init__(peds,results,horse_results)
-        # super(Predictor, self).__init__()
         self.race_id_list = race_id_list
 
 
@@ -2113,12 +2112,16 @@ class Predictor(LearnLGBM):
         st.merge_horse_results(self.hr)
         st.merge_peds(self.pe.peds_vec)
         st.process_categorical(self.r.le_horse, self.r.le_jockey, self.r.data_pe)
+        self.st = st
         sl = RankSimulater(self.model)
         pred_table = sl.return_pred_table(st.data_c)
+        self.sl = sl
         print(pred_table)
             
 
     def show_results_today(self):
+        data =  ShutubaTable.scrape(self.race_id_list, self.date)
+        self.data = data.copy()
         st = ShutubaTable(self.data)
         st.preprocessing()
         st.merge_horse_results(self.hr)
