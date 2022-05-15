@@ -6,19 +6,13 @@ import re
 import time
 import urllib.request
 import xgboost as xgb
-from sklearn.metrics import classification_report, accuracy_score,roc_curve, roc_auc_score
+from sklearn.metrics import classification_report, roc_auc_score
 from imblearn.under_sampling import RandomUnderSampler
-from sklearn.metrics import average_precision_score
 import numpy as np
 import matplotlib.pyplot as plt
 from graphviz import *
 from sklearn.preprocessing import LabelEncoder
-import optuna.integration.xgboost as xgb_o
-import optuna.integration.lightgbm as lgb_o
-import scipy as sp
 import lightgbm as lgb
-import optuna
-import sklearn
 from scipy.special import comb
 from itertools import combinations
 import copy
@@ -26,10 +20,6 @@ from sklearn.metrics import r2_score
 from sklearn.metrics import roc_auc_score
 from scipy.special import comb
 from itertools import permutations
-import datetime
-import lxml
-import seaborn as sns
-from hyperopt import hp, tpe, Trials, fmin,STATUS_OK
 import fasttext as ft
 
 place_dict = {
@@ -1733,9 +1723,8 @@ class RankSimulater(Simulater):
             '11':0,
             '12':0
         }
-
         self.pred_odds_list = []
-
+        print("here")
         for race_id in race_id_list: # race_id : int
             pred_df = self.return_pred_table(data_c.loc[race_id],is_long=is_long)
             df_  = return_tables.loc[race_id]
@@ -1794,7 +1783,6 @@ class RankSimulater(Simulater):
         print("的中% :",'{:.2f}'.format(acc_dict['単勝']/real_race_len*100),'%')
         print("収支   :",return_dict['単勝'],'円')
         print("的中レース :",race_count_dict)
-#         print("的中レース",tansho_list)
 
     
     def calc_tansho_top3(self,data_c,return_tables,odds=2.0,bet=100,is_long=True):
@@ -1911,8 +1899,7 @@ class RankSimulater(Simulater):
                         
     def calc_wide_3box(self,data_c,return_tables,odds=2.0,bet=100,is_long=True):
         pass
-            
-    
+                
     def calc_sanrenpuku(self,data_c,return_tables,bet=100,is_long=True):
         acc_dict = {'三連複':0}
         return_dict = {'三連複':0}
@@ -1971,7 +1958,6 @@ class RankSimulater(Simulater):
     def calc_sanrenpuku_box(self,data_c,return_tables,odds=2.0,bet=100,is_long=True):
         pass
     
-    
     def calc_sanrentan(self,data_c,return_tables,bet=100,is_long=True):
         acc_dict = {'三連単':0}
         return_dict = {'三連単':0}
@@ -2026,7 +2012,6 @@ class RankSimulater(Simulater):
         print("的中率 :",acc_dict['三連単'],'/',real_race_len)
         print("的中% :",'{:.2f}'.format((acc_dict['三連単']/real_race_len)*100),'%')
         print("収支   :",return_dict['三連単'],'円')
-    
     
     def show_results_today(self , st ,race_id_list ,bet = 100):
         acc_dict = {'単勝':0,'複勝':0,'ワイド':0}
@@ -2104,7 +2089,6 @@ class RankSimulater(Simulater):
         print("的中% :",'{:.2f}'.format(acc_dict['ワイド']/len(race_id_list)*100),'%')
         print("収支   :",return_dict['ワイド'],'円')
         print("的中レース",wide_list)
-    
     
     def return_pred_table(self,data_c,is_long=False):
         # is_long って何？
@@ -2262,9 +2246,9 @@ class RankSimulater(Simulater):
             if type(rank)!=pd.core.series.Series:
                 if  pred_1 == rank:
                     race_count_dict[str(race_id)[-2:]] += 1
-                    acc_dict['単勝'] += 1
                     
                     if pred_odds>=odds and score_1!= score_2:
+                        acc_dict['単勝'] += 1
                         profit = pred_odds*bet
                         return_dict['単勝'] += profit
                         tansho_list.append(race_id)
@@ -2276,9 +2260,9 @@ class RankSimulater(Simulater):
             else:
                 if  pred_1 == rank.values[0] or pred_1 == rank.values[1]:
                     race_count_dict[str(race_id)[-2:]] += 1
-                    acc_dict['単勝'] += 1
                     
                     if pred_odds>=odds and score_1!= score_2:
+                        acc_dict['単勝'] += 1
                         profit = pred_odds*bet
                         return_dict['単勝'] += profit
                         tansho_list.append(race_id)
@@ -2410,26 +2394,7 @@ class RankSimulater(Simulater):
         
     def calc_wide(self,data_c,return_tables,odds=2.0,bet=100,is_long=True):
         pass
-        # acc_dict = {'単勝':0,'複勝':0,'ワイド':0}
-        # return_dict = {'単勝':0,'複勝':0,'ワイド':0}
-        # wide_list = []
-        # race_id_list = data_c.index.tolist()
-        
-        # for i in range(len(df_[df_[0]=='ワイド'][1].str.split(' ')[0])//2):
-        #     if set([pred_1,pred_2])==set(df_[df_[0]=='ワイド'][1].str.split(' ')[0][i:i+2]):
-        #         if i!=0:
-        #             return_index = i-1
-        #         else:
-        #             return_index = i
 
-        #     profit = int(df_[df_[0]=='ワイド'][2].str.split('円')[0][return_index].replace(',',''))
-        #     return_dict['ワイド'] += profit
-        #     print("profit",profit)
-        #     acc_dict['ワイド'] += 1
-        #     wide_list.append(race_id[-2:])
-        #     break
-            
-            
     def calc_wide_3box(self,data_c,return_tables,odds=2.0,bet=100,is_long=True):
         pass
             
@@ -2644,7 +2609,6 @@ class LearnLGBM():
         self.y_train = None
         self.y_test = None
 
-
     def learn_model_ft(self,path_ft='peds_ft.txt'):
         model_ft = ft.train_unsupervised(path_ft,dim=62,minn=2,maxn=14)
         self.model_ft = model_ft
@@ -2789,6 +2753,7 @@ class Predictor(LearnLGBM):
         pe.vectorize(pe.peds_re,model_ft)
         self.pe = pe
         print("pe finish")
+        print("pe regularizrd")
 
         r = Results(results)
         r.preprocessing()
@@ -2831,3 +2796,10 @@ class Predictor(LearnLGBM):
         sl = RankSimulater(self.model)
         sl.return_table_today(self.race_id_list)
         sl.show_results_today(st ,self.race_id_list)
+
+
+class Test():
+
+
+    def __init__(self):
+        print("test")
