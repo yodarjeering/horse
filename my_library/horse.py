@@ -2689,7 +2689,7 @@ class LearnLGBM():
 
         self.model = lgb_rank
 
-
+# train data を与えて学習させるのが learn_lgb2
     def learn_lgb2(self,train,lgbm_params=None):
         if lgbm_params==None:
             lgbm_params = {
@@ -2719,6 +2719,32 @@ class Predictor(LearnLGBM):
     def __init__(self,peds,results,horse_results,race_id_list):
         super(Predictor, self).__init__(peds,results,horse_results)
         self.race_id_list = race_id_list
+        
+
+    def process_pe(self,new_peds):
+        pe = Peds(new_peds)
+        pe.regularize_peds()
+        pe.vectorize(pe.peds_re,self.model_ft)
+        self.pe = pe
+        print("pe finish")
+        print("pe regularizrd")
+
+
+    def process_hr(self,results,horse_results):
+        r = Results(results)
+        r.preprocessing()
+        horse_id_list = self.data['horse_id'].astype(str).unique()
+        horse_results_tmp = HorseResults.scrape(horse_id_list)
+        new_horse_results = update_data(horse_results,horse_results_tmp)
+        self.hores_results = new_horse_results.copy()
+        hr = HorseResults(new_horse_results)
+        self.hr = hr
+        print("hr finish")
+        r.merge_horse_results(hr)
+        r.merge_peds(self.pe.peds_vec)
+        r.process_categorical()  
+        self.r = r
+        
 
 
     def process_data(self):
@@ -2742,34 +2768,15 @@ class Predictor(LearnLGBM):
             new_peds = update_data(peds, pe_tmp.peds_re)
         else:
             new_peds = peds.copy()
+
+
         self.peds = new_peds.copy()
         path_ft = '/Users/rince/Desktop/Horse/code/horse/peds_ft.txt'
         new_peds.to_csv(path_ft,header=False,index=False,sep=',')
         self.learn_model_ft(path_ft=path_ft)
-        model_ft = self.get_model_ft()
+        self.process_pe(new_peds)
+        self.process_hr(results,horse_results)
 
-        pe = Peds(new_peds)
-        pe.regularize_peds()
-        pe.vectorize(pe.peds_re,model_ft)
-        self.pe = pe
-        print("pe finish")
-        print("pe regularizrd")
-
-        r = Results(results)
-        r.preprocessing()
-        horse_id_list = data['horse_id'].astype(str).unique()
-        horse_results_tmp = HorseResults.scrape(horse_id_list)
-        new_horse_results = update_data(horse_results,horse_results_tmp)
-        self.hores_results = new_horse_results.copy()
-        hr = HorseResults(new_horse_results)
-        self.hr = hr
-        print("hr finish")
-
-        r.merge_horse_results(hr)
-        r.merge_peds(pe.peds_vec)
-        r.process_categorical()  
-        self.r = r
-    
     
     def predict(self, race_id):
         data =  ShutubaTable.scrape([str(race_id)], self.date)
