@@ -2608,9 +2608,20 @@ class LearnLGBM():
         self.x_test = None
         self.y_train = None
         self.y_test = None
+        self.lgbm_params =  {
+                'lambdarank_truncation_level': 1,
+                'metric': 'ndcg',
+                'objective': 'lambdarank',
+                'ndcg_eval_at': [1,2,3],
+                'learning_rate': 0.012667568875587308,
+                'boosting_type': 'gbdt',
+                'random_state': 777,
+                'force_col_wise':True
+            }
 
-    def learn_model_ft(self,path_ft='peds_ft.txt'):
-        model_ft = ft.train_unsupervised(path_ft,dim=62,minn=2,maxn=14)
+
+    def learn_model_ft(self,path_ft='peds_ft.txt',minn=2,maxn=14):
+        model_ft = ft.train_unsupervised(path_ft,dim=62,minn=minn,maxn=maxn)
         self.model_ft = model_ft
 
 
@@ -2618,28 +2629,23 @@ class LearnLGBM():
         return self.model_ft
     
 
-    def process_data(self):
-        peds = self.peds.copy()
-        results = self.results.copy()
-        horse_results = self.horse_results.copy()
-
-        self.learn_model_ft()
-        model_ft = self.get_model_ft()
-        
+    def process_pe(self,peds):
         pe = Peds(peds)
         pe.regularize_peds()
-        pe.vectorize(pe.peds_re,model_ft)
+        pe.vectorize(pe.peds_re,self.model_ft)
         self.pe = pe
-        
+        print("pe finish")
+        print("pe regularizrd")
+
+
+    def process_hr(self,results,horse_results):
         r = Results(results)
-        #前処理
         r.preprocessing()
         #馬の過去成績データ追加
-        
         hr = HorseResults(horse_results)
         self.hr = hr
         r.merge_horse_results(hr)
-        r.merge_peds(pe.peds_vec)
+        r.merge_peds(self.pe.peds_vec)
         # r.merge_peds(pe.peds_cat)
         #カテゴリ変数の処理
         # pedsは既にカテゴリ化したdataをconcatしているので, ここでカテゴリ化せずとも良い
@@ -2647,6 +2653,15 @@ class LearnLGBM():
         self.r = r
 
 
+    def process_data(self):
+        peds = self.peds.copy()
+        results = self.results.copy()
+        horse_results = self.horse_results.copy()
+        self.learn_model_ft()
+        self.process_pe(peds)
+        self.process_hr(results,horse_results)
+        
+        
     def get_train_data(self,test_size=0.2):
         self.process_data()
         train, test = split_data(self.r.data_c.fillna(0),test_size=test_size,rank_learning=False)
@@ -2667,15 +2682,7 @@ class LearnLGBM():
 
     def learn_lgb(self,lgbm_params=None,test_size=0.2):
         if lgbm_params==None:
-            lgbm_params = {
-                'lambdarank_truncation_level': 1,
-                'metric': 'ndcg',
-                'objective': 'lambdarank',
-                'ndcg_eval_at': [1,2,3],
-                'learning_rate': 0.012667568875587308,
-                'boosting_type': 'gbdt',
-                'random_state': 777
-            }
+            lgbm_params = self.lgbm_params
         
         train, test = self.get_train_data(test_size=test_size)
         lgb_rank = lgb.train(
@@ -2692,15 +2699,7 @@ class LearnLGBM():
 # train data を与えて学習させるのが learn_lgb2
     def learn_lgb2(self,train,lgbm_params=None):
         if lgbm_params==None:
-            lgbm_params = {
-                'lambdarank_truncation_level': 1,
-                'metric': 'ndcg',
-                'objective': 'lambdarank',
-                'ndcg_eval_at': [1,2,3],
-                'learning_rate': 0.012667568875587308,
-                'boosting_type': 'gbdt',
-                'random_state': 777
-            }
+            lgbm_params = self.lgbm_params
         
         lgb_rank = lgb.train(
                 lgbm_params,
@@ -2719,16 +2718,8 @@ class Predictor(LearnLGBM):
     def __init__(self,peds,results,horse_results,race_id_list):
         super(Predictor, self).__init__(peds,results,horse_results)
         self.race_id_list = race_id_list
+        self.nopeds_id_list = []
         
-
-    def process_pe(self,new_peds):
-        pe = Peds(new_peds)
-        pe.regularize_peds()
-        pe.vectorize(pe.peds_re,self.model_ft)
-        self.pe = pe
-        print("pe finish")
-        print("pe regularizrd")
-
 
     def process_hr(self,results,horse_results):
         r = Results(results)
@@ -2746,7 +2737,6 @@ class Predictor(LearnLGBM):
         self.r = r
         
 
-
     def process_data(self):
         race_id_list = self.race_id_list.copy()
         data =  ShutubaTable.scrape(race_id_list, self.date)
@@ -2754,9 +2744,9 @@ class Predictor(LearnLGBM):
         peds = self.peds.copy()
         results = self.results.copy()
         horse_results = self.horse_results.copy()
-
-
         nopeds_id_list = []
+
+
         for ind in data['horse_id'].astype(int).unique():
             if ind not in peds.index:
                 nopeds_id_list.append(str(ind))
@@ -2768,8 +2758,8 @@ class Predictor(LearnLGBM):
             new_peds = update_data(peds, pe_tmp.peds_re)
         else:
             new_peds = peds.copy()
-
-
+        
+        self.nopeds_id_list = nopeds_id_list
         self.peds = new_peds.copy()
         path_ft = '/Users/rince/Desktop/Horse/code/horse/peds_ft.txt'
         new_peds.to_csv(path_ft,header=False,index=False,sep=',')
@@ -2803,6 +2793,8 @@ class Predictor(LearnLGBM):
         sl = RankSimulater(self.model)
         sl.return_table_today(self.race_id_list)
         sl.show_results_today(st ,self.race_id_list)
+
+
 
 
 class Test():
