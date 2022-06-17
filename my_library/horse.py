@@ -2608,16 +2608,19 @@ class LearnLGBM():
         self.x_test = None
         self.y_train = None
         self.y_test = None
-        self.lgbm_params =  {
-                'lambdarank_truncation_level': 1,
+        lgbm_params = {
                 'metric': 'ndcg',
                 'objective': 'lambdarank',
                 'ndcg_eval_at': [1,2,3],
-                'learning_rate': 0.012667568875587308,
                 'boosting_type': 'gbdt',
                 'random_state': 777,
+                'lambdarank_truncation_level': 10,
+                'learning_rate': 0.02273417953255777,
+                'n_estimators': 97,
+                'num_leaves': 42,
                 'force_col_wise':True
             }
+
 
 
     def learn_model_ft(self,path_ft='peds_ft.txt',minn=2,maxn=14):
@@ -2677,6 +2680,18 @@ class LearnLGBM():
         self.x_test = x_test
         self.y_train = y_train
         self.y_test = y_test
+        return train, test
+
+    
+    def get_train_data2(self):
+        x_train = self.x_train
+        x_test = self.x_test
+        y_train = self.y_train
+        y_test = self.y_test
+        train_query = x_train.groupby(x_train.index).size()
+        test_query = x_test.groupby(x_test.index).size()
+        train = lgb.Dataset(x_train, y_train, group=train_query)
+        test = lgb.Dataset(x_test, y_test, reference=train, group=test_query)
         return train, test
 
 
