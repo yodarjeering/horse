@@ -71,8 +71,6 @@ def gain(return_func, x_, n_samples=100,lower=50,t_range=[0.5,3.5]):
             gain[threshold] = {'return_rate':return_rate,'n_hits':n_hits,'std':std,'n_bets':n_bets}
     return pd.DataFrame(gain).T
 
-
-
 def plot(g,label=''):
     plt.fill_between(g.index,y1 = g['return_rate'] - g['std'],y2=g['return_rate']+g['std'],alpha=0.3)
     plt.plot(g.index,g['return_rate'],label=label)
@@ -443,8 +441,6 @@ def peds_scrape(horse_id_list):
     peds_df.index =peds_df.index.astype(int)
 
     return peds_df
-
-
 
 class HorseResults:
     def __init__(self, horse_results):
@@ -2794,11 +2790,3 @@ class Predictor(LearnLGBM):
         sl.return_table_today(self.race_id_list)
         sl.show_results_today(st ,self.race_id_list)
 
-
-
-
-class Test():
-
-
-    def __init__(self):
-        print("test")
