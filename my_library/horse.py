@@ -115,11 +115,13 @@ def plot_importances(xgb_model, x_test):
     print(importances.sort_values('importances', ascending=False)[:20])
     
 def xgb_pred(x_train, y_train, x_test, y_test):
-    param_dist = {'objective':'binary:logistic',
-                  'n_estimators':14,
-                  'use_label_encoder':False,
-                 'max_depth':4,
-                 'random_state':100}
+    param_dist = {
+        'objective':'binary:logistic',
+        'n_estimators':14,
+        'use_label_encoder':False,
+        'max_depth':4,
+        'random_state':100
+                 }
     
     best_params = {'booster': 'gbtree', 
                    'objective': 'binary:logistic',
@@ -1586,7 +1588,7 @@ class Simulater():
         print("的中率 :",acc_dict['ワイド'],'/',len(race_id_list))
         print("収支   :",return_dict['ワイド'],'円')
         print("的中レース",wide_list)
-             
+
 class RankSimulater(Simulater):
     
     
@@ -2608,7 +2610,9 @@ class LearnLGBM():
         self.x_test = None
         self.y_train = None
         self.y_test = None
-        lgbm_params = {
+        self.path_ft = '/Users/Owner/Desktop/Horse/ft_data/peds_ft.txt'
+
+        self.lgbm_params = {
                 'metric': 'ndcg',
                 'objective': 'lambdarank',
                 'ndcg_eval_at': [1,2,3],
@@ -2623,7 +2627,8 @@ class LearnLGBM():
 
 
 
-    def learn_model_ft(self,path_ft='peds_ft.txt',minn=2,maxn=14):
+    def learn_model_ft(self,minn=2,maxn=14):
+        path_ft = self.path_ft
         model_ft = ft.train_unsupervised(path_ft,dim=62,minn=minn,maxn=maxn)
         self.model_ft = model_ft
 
@@ -2776,9 +2781,10 @@ class Predictor(LearnLGBM):
         
         self.nopeds_id_list = nopeds_id_list
         self.peds = new_peds.copy()
-        path_ft = '/Users/rince/Desktop/Horse/code/horse/peds_ft.txt'
+        path_ft =  self.path_ft 
+        
         new_peds.to_csv(path_ft,header=False,index=False,sep=',')
-        self.learn_model_ft(path_ft=path_ft)
+        self.learn_model_ft(path_ft)
         self.process_pe(new_peds)
         self.process_hr(results,horse_results)
 
@@ -2810,10 +2816,3 @@ class Predictor(LearnLGBM):
         sl.show_results_today(st ,self.race_id_list)
 
 
-
-
-class Test():
-
-
-    def __init__(self):
-        print("test")
