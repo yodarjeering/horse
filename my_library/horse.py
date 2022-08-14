@@ -1,3 +1,4 @@
+from random import betavariate
 import pandas as pd
 from tqdm.notebook import tqdm as tqdm
 import requests
@@ -1683,9 +1684,23 @@ class RankSimulater(Simulater):
         print("的中レース",wide_list)
     
 #     odds以上の馬券しか買わない
-    def show_long_results(self, data_c, return_tables, kaime='tansho', odds=2.0, bet = 100):
+    def show_sim_results(self, data_c, kaime='tansho', is_long=True, odds=2.0, bet = 100):
+        race_id_list = list(set(data_c.index))
+        race_len = len(race_id_list)
+        race_dict = {}
+        # error_count = 0, エラーの如何によってはcountしない
+
         if kaime=='tansho':
-            pass
+            for race_id in race_id_list:
+                profit,is_atari,is_buy,actual_rank,not_buy_reason,is_error = self.calc_tansho(data_c,race_id,odds,bet,is_long)
+                row_list = [profit,is_atari,is_buy,actual_rank,not_buy_reason,is_error]
+                race_dict[race_id] = row_list
+                # if is_error:
+                #     continue
+            result_df = pd.DataFrame(race_dict).T
+            result_df.rename(columns={0:'profit',1:'is_atari',2:'is_buy',3:'actual_rank',4:'not_buy_reason',5:'is_error'},inplace=True)
+            #  ほんであとはresult_df を適当な関数に渡して計算して出力させればok
+
         elif kaime=='fukusho':
             pass
         elif kaime=='wide':
@@ -1704,89 +1719,162 @@ class RankSimulater(Simulater):
             print("No such kaime.")
 
             
-    def calc_tansho(self,data_c,return_tables,odds=2.0,bet=100,is_long=True):
-#         data_c = r.data_cを仮定
-        acc_dict = {'単勝':0,'複勝':0,'ワイド':0}
-        return_dict = {'単勝':0,'複勝':0,'ワイド':0}
-        tansho_list = []
-        race_id_list = list(set(data_c.index))
-        not_bet_count = 0
-        race_count_dict = {
-            '01':0,
-            '02':0,
-            '03':0,
-            '04':0,
-            '05':0,
-            '06':0,
-            '07':0,
-            '08':0,
-            '09':0,
-            '10':0,
-            '11':0,
-            '12':0
-        }
-        self.pred_odds_list = []
-        print("here")
-        for race_id in race_id_list: # race_id : int
-            pred_df = self.return_pred_table(data_c.loc[race_id],is_long=is_long)
-            df_  = return_tables.loc[race_id]
-            pred_df = pred_df.loc[race_id]
-            pred_df = pred_df.sort_values('scores',ascending=False)
-            pred_1 = pred_df['馬番'].iloc[0]
-            pred_2 = pred_df['馬番'].iloc[1]
-#             上位２着の予測スコアが同じなら賭けない
-            score_1 = pred_df['scores'].iloc[0]
-            score_2 = pred_df['scores'].iloc[1]
+#     def calc_tansho(self,data_c,return_tables,odds=2.0,bet=100,is_long=True):
+# #         data_c = r.data_cを仮定
+#         acc_dict = {'単勝':0,'複勝':0,'ワイド':0}
+#         return_dict = {'単勝':0,'複勝':0,'ワイド':0}
+#         tansho_list = []
+#         race_id_list = list(set(data_c.index))
+#         not_bet_count = 0
+#         race_count_dict = {
+#             '01':0,
+#             '02':0,
+#             '03':0,
+#             '04':0,
+#             '05':0,
+#             '06':0,
+#             '07':0,
+#             '08':0,
+#             '09':0,
+#             '10':0,
+#             '11':0,
+#             '12':0
+#         }
+#         self.pred_odds_list = []
+#         print("here")
+#         for race_id in race_id_list: # race_id : int
+#             pred_df = self.return_pred_table(data_c.loc[race_id],is_long=is_long)
+#             df_  = return_tables.loc[race_id]
+#             pred_df = pred_df.loc[race_id]
+#             pred_df = pred_df.sort_values('scores',ascending=False)
+#             pred_1 = pred_df['馬番'].iloc[0]
+#             pred_2 = pred_df['馬番'].iloc[1]
+# #             上位２着の予測スコアが同じなら賭けない
+#             score_1 = pred_df['scores'].iloc[0]
+#             score_2 = pred_df['scores'].iloc[1]
 
             
-            pred_odds = data_c[data_c['馬番']==pred_1].loc[race_id]['単勝']
-            try:
-                rank = data_c[data_c['rank']==1].loc[race_id]['馬番']
-            except:
-                continue
+#             pred_odds = data_c[data_c['馬番']==pred_1].loc[race_id]['単勝']
+#             try:
+#                 rank = data_c[data_c['rank']==1].loc[race_id]['馬番']
+#             except:
+#                 continue
 
 
-            if type(rank)!=pd.core.series.Series:
-                if  pred_1 == rank:
-                    race_count_dict[str(race_id)[-2:]] += 1
+#             if type(rank)!=pd.core.series.Series:
+#                 if  pred_1 == rank:
+#                     race_count_dict[str(race_id)[-2:]] += 1
                     
                     
-                    if pred_odds>=odds and score_1!= score_2:
-                        acc_dict['単勝'] += 1
-                        self.pred_odds_list.append(pred_odds)
-                        profit = pred_odds*bet
-                        return_dict['単勝'] += profit
-                        tansho_list.append(race_id)
-                    else: #odds　低い or 出力の信頼性がないときは買わない
-                        not_bet_count += 1
-#                     odds低かったら買わない
-                elif data_c[data_c['馬番']==int(pred_1)].loc[race_id]['単勝']<odds:
-                    not_bet_count+=1
+#                     if pred_odds>=odds and score_1!= score_2:
+#                         acc_dict['単勝'] += 1
+#                         self.pred_odds_list.append(pred_odds)
+#                         profit = pred_odds*bet
+#                         return_dict['単勝'] += profit
+#                         tansho_list.append(race_id)
+#                     else: #odds　低い or 出力の信頼性がないときは買わない
+#                         not_bet_count += 1
+# #                     odds低かったら買わない
+#                 elif data_c[data_c['馬番']==int(pred_1)].loc[race_id]['単勝']<odds:
+#                     not_bet_count+=1
+#             else:
+#                 if  pred_1 == rank.values[0] or pred_1 == rank.values[1]:
+#                     race_count_dict[str(race_id)[-2:]] += 1
+                    
+#                     if pred_odds>=odds and score_1!= score_2:
+#                         acc_dict['単勝'] += 1
+#                         profit = pred_odds*bet
+#                         return_dict['単勝'] += profit
+#                         tansho_list.append(race_id)
+#                     else: #odds　低い or 出力の信頼性がないときは買わない
+#                         not_bet_count += 1
+#                 elif data_c[data_c['馬番']==int(pred_1)].loc[race_id]['単勝']<odds:
+#                     not_bet_count+=1
+
+#         real_race_len = len(race_id_list) - not_bet_count
+#         return_dict['単勝'] -= bet * real_race_len
+#         print("not_bet_count",not_bet_count)
+#         print("---------------------")
+#         print("単勝")
+#         print("的中率 :",acc_dict['単勝'],'/',real_race_len)
+#         print("的中% :",'{:.2f}'.format(acc_dict['単勝']/real_race_len*100),'%')
+#         print("収支   :",return_dict['単勝'],'円')
+#         print("的中レース :",race_count_dict)
+
+
+    def calc_tansho(self,data_c,race_id,odds,bet,is_long):
+        pred_df = self.return_pred_table(data_c.loc[race_id],is_long=is_long)
+        pred_df = pred_df.loc[race_id]
+        pred_df = pred_df.sort_values('scores',ascending=False)
+        pred_1 = pred_df['馬番'].iloc[0]
+        score_1 = pred_df['scores'].iloc[0]
+        score_2 = pred_df['scores'].iloc[1]
+        pred_odds = data_c[data_c['馬番']==int(pred_1)].loc[race_id]['単勝']
+        actual_rank = data_c[data_c['馬番']==int(pred_1)].loc[race_id]['rank']
+        is_error = False
+        not_buy_reason = ''
+
+        try:
+            rank = data_c[data_c['rank']==1].loc[race_id]['馬番']
+        except Exception as e:
+            print(e)
+            is_error = True
+            return 0,False,False,0,not_buy_reason,is_error
+            
+        is_atari = False
+        is_buy = True
+
+        if type(rank)==pd.core.series.Series:
+            is_atari = (pred_1 == rank.values[0] or pred_1 == rank.values[1])
+        elif pred_1 == rank:
+            is_atari = True
+
+#             上位２着の予測スコアが同じなら賭けない
+        if score_1==score_2:
+            is_buy = False
+            not_buy_reason = 'same score 1 and  2'
+        
+        if pred_odds < odds:
+            is_buy = False
+            not_buy_reason = 'low pred odds'
+
+
+        if is_atari:
+            if is_buy:
+                profit = pred_odds*bet
             else:
-                if  pred_1 == rank.values[0] or pred_1 == rank.values[1]:
-                    race_count_dict[str(race_id)[-2:]] += 1
-                    
-                    if pred_odds>=odds and score_1!= score_2:
-                        acc_dict['単勝'] += 1
-                        profit = pred_odds*bet
-                        return_dict['単勝'] += profit
-                        tansho_list.append(race_id)
-                    else: #odds　低い or 出力の信頼性がないときは買わない
-                        not_bet_count += 1
-                elif data_c[data_c['馬番']==int(pred_1)].loc[race_id]['単勝']<odds:
-                    not_bet_count+=1
+                profit = 0
+        else:
+            if is_buy:
+                profit -= bet
+            else:
+                profit = 0
 
-        real_race_len = len(race_id_list) - not_bet_count
-        return_dict['単勝'] -= bet * real_race_len
+        return profit, is_atari, is_buy, actual_rank, not_buy_reason, is_error
+        
+
+    def return_result_dict(self,profit,is_atari,is_buy,actual_rank,not_buy_reason,is_error):
+        calc_result_dict = {
+            'profit':[],
+            'is_atari':[],
+            'is_buy':[],
+            'actual_rank':[],
+            'not_buy_reason':[],
+            'is_error':[]
+        }
+
+
+
+    def print_results(self,kaime,acc_dict,not_bet_count,real_race_len,return_dict):
         print("not_bet_count",not_bet_count)
         print("---------------------")
-        print("単勝")
-        print("的中率 :",acc_dict['単勝'],'/',real_race_len)
-        print("的中% :",'{:.2f}'.format(acc_dict['単勝']/real_race_len*100),'%')
-        print("収支   :",return_dict['単勝'],'円')
-        print("的中レース :",race_count_dict)
+        print(kaime)
+        print("的中率 :",acc_dict[kaime],'/',real_race_len)
+        print("的中% :",'{:.2f}'.format(acc_dict[kaime]/real_race_len*100),'%')
+        print("収支   :",return_dict[kaime],'円')
+        # print("的中レース :",race_count_dict)
 
-    
+
     def calc_tansho_top3(self,data_c,return_tables,odds=2.0,bet=100,is_long=True):
         acc_dict = {'単勝':0,'複勝':0,'ワイド':0}
         return_dict = {'単勝':0,'複勝':0,'ワイド':0}
@@ -2610,7 +2698,7 @@ class LearnLGBM():
         self.x_test = None
         self.y_train = None
         self.y_test = None
-        self.path_ft = '/Users/Owner/Desktop/Horse/ft_data/peds_ft.txt'
+        self.path_ft = '/Users/Owner/Desktop/Horse/horse/ft_data/peds_ft.txt'
 
         self.lgbm_params = {
                 'metric': 'ndcg',
