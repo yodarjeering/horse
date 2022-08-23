@@ -114,77 +114,6 @@ def plot_importances(xgb_model, x_test):
     importances = pd.DataFrame(
     {'features' : x_test.columns, 'importances' : xgb_model.feature_importances_})
     print(importances.sort_values('importances', ascending=False)[:20])
-    
-def xgb_pred(x_train, y_train, x_test, y_test):
-    param_dist = {
-        'objective':'binary:logistic',
-        'n_estimators':14,
-        'use_label_encoder':False,
-        'max_depth':4,
-        'random_state':100
-                 }
-    
-    best_params = {'booster': 'gbtree', 
-                   'objective': 'binary:logistic',
-                   'use_label_encoder':False,
-                   'eval_metric': 'rmse', 
-                   'random_state': 100, 
-                   'use_label_encoder':False,
-                   'eta': 0.13449222415941048,
-                   'max_depth': 3,
-                   'lambda': 0.7223936363734638, 
-                   'n_estimators': 14, 
-                   'reg_alpha': 0.7879044553842869,
-                   'reg_lambda': 0.7780344172793093,
-                   'importance_type': 'gain'}
-    xgb_model = xgb.XGBClassifier(**best_params)
-    hr_pred = xgb_model.fit(x_train.astype(float), np.array(y_train), eval_metric='logloss').predict(x_test.astype(float))
-    print("---------------------")
-    y_proba_train = xgb_model.predict_proba(x_train)[:,1]
-    y_proba = xgb_model.predict_proba(x_test)[:,1]
-    print('AUC train:',roc_auc_score(y_train,y_proba_train))    
-    print('AUC test :',roc_auc_score(y_test,y_proba))
-    print(classification_report(np.array(y_test), hr_pred))
-    xgb.plot_importance(xgb_model) 
-    plot_importances(xgb_model, x_test)
-    return xgb_model
-
-def lgb_pred(x_train, y_train, x_test, y_test):
-    param_dist = {
-        'objective' : 'binary',
-          'random_state':100,
-                 }
-    best_params = {'objective': 'binary',
-     'metric': 'l1',
-     'verbosity': -1,
-     'boosting_type': 'gbdt',
-     'feature_pre_filter': False,
-     'lambda_l1': 0.001101158293733924,
-     'lambda_l2': 7.419556660834531e-07,
-     'num_leaves': 254,
-     'feature_fraction': 1.0,
-     'bagging_fraction': 0.9773374137350906,
-     'bagging_freq': 1,
-     'min_child_samples': 5,
-    #  'num_iterations': 200,
-    #  'early_stopping_round': 50,
-     'categorical_column': [4,
-                            5,94,95,96,97,  98,  99,  100,  101,  102,  103,  104,  105,  106,  107,  108,  109,  110,  111,  112,  113,  114,  115,  116,  117,  118,  119,  120,  121,  122,  123,  124,  125,  126,  127,  128,  129,  130,  131,  132,  133,  134,  135,  136,  137,  138,  139,  140,  141,  142,  143,  144,  145,  146,  147,  148,  149,  150,  151,  152,  153,  154,
-      155]
-                  }
-
-    lgb_model = lgb.LGBMClassifier(**best_params)
-    hr_pred = lgb_model.fit(x_train.astype(float), np.array(y_train), eval_metric='logloss').predict(x_test.astype(float))
-    print("---------------------")
-    y_proba_train = lgb_model.predict_proba(x_train.astype(float))[:,1]
-    y_proba = lgb_model.predict_proba(x_test.astype(float))[:,1]
-    print('AUC train:',roc_auc_score(y_train,y_proba_train))    
-    print('AUC test :',roc_auc_score(y_test,y_proba))
-    print(classification_report(np.array(y_test), hr_pred))
-    plt.clf()
-    lgb.plot_importance(lgb_model) 
-    plot_importances(lgb_model, x_test)
-    return lgb_model
 
 def make_data(data_,test_rate=0.8,is_rus=True):
     data_ = data_.sort_values('date')
@@ -458,6 +387,7 @@ class HorseResults:
     def read_pickle(cls, path_list):
         df = pd.concat([pd.read_pickle(path) for path in path_list])
         return cls(df)
+
     @staticmethod
     def scrape(horse_id_list):
         #horse_idをkeyにしてDataFrame型を格納
@@ -644,8 +574,7 @@ class Return:
         return return_tables_df
     
     
-    
-   
+
     @property
     def fukusho(self):
         fukusho = self.return_tables[self.return_tables[0]=='複勝'][[1,2]]
@@ -1693,11 +1622,11 @@ class RankSimulater(Simulater):
             
 
             for race_id in race_id_list:
-                profit,is_atari,is_buy,actual_rank,not_buy_reason,is_error = self.calc_tansho(data_c,race_id,odds,bet,is_long)
-                row_list = [profit,is_atari,is_buy,actual_rank,not_buy_reason,is_error]
+                profit,is_atari,is_buy,actual_rank,not_buy_reason,pred_odds = self.calc_tansho(data_c,race_id,odds,bet,is_long)
+                row_list = [profit,is_atari,is_buy,actual_rank,not_buy_reason,pred_odds]
                 race_dict[race_id] = row_list
             tansho_result = pd.DataFrame(race_dict).T
-            tansho_result.rename(columns={0:'profit',1:'is_atari',2:'is_buy',3:'actual_rank',4:'not_buy_reason',5:'is_error'},inplace=True)
+            tansho_result.rename(columns={0:'profit',1:'is_atari',2:'is_buy',3:'actual_rank',4:'not_buy_reason',5:'pred_odds'},inplace=True)
             return tansho_result
 
         elif kaime=='fukusho':
@@ -1736,7 +1665,6 @@ class RankSimulater(Simulater):
         score_2 = pred_df['scores'].iloc[1]
         pred_odds = data_c[data_c['馬番']==int(pred_1)].loc[race_id]['単勝']
         actual_rank = data_c[data_c['馬番']==int(pred_1)].loc[race_id]['rank']
-        is_error = False
         not_buy_reason = ''
         profit = 0
 
@@ -1744,8 +1672,7 @@ class RankSimulater(Simulater):
             rank = data_c[data_c['rank']==1].loc[race_id]['馬番']
         except Exception as e:
             print(e)
-            is_error = True
-            return 0,False,False,0,not_buy_reason,is_error
+            return 0,False,False,0,not_buy_reason,-1
             
         is_atari = False
         is_buy = True
@@ -1776,22 +1703,9 @@ class RankSimulater(Simulater):
             else:
                 profit = 0
 
-        return profit, is_atari, is_buy, actual_rank, not_buy_reason, is_error
+        return profit, is_atari, is_buy, actual_rank, not_buy_reason, pred_odds
         
 
-    def return_result_dict(self,profit,is_atari,is_buy,actual_rank,not_buy_reason,is_error):
-        calc_result_dict = {
-            'profit':[],
-            'is_atari':[],
-            'is_buy':[],
-            'actual_rank':[],
-            'not_buy_reason':[],
-            'is_error':[]
-        }
-
-
-    def calc_result_df(self):
-        pass
 
     def calc_fukusho(self,data_c,race_id,is_long,return_tables):
         pred_df = self.return_pred_table(data_c.loc[race_id],is_long=is_long)
@@ -1835,13 +1749,7 @@ class RankSimulater(Simulater):
         
         return  pred_list,tansho_odds_list,actual_rank_list,fukusho_odds_list,fukusho_list
 
-        
-    def calc_wide(self,data_c,return_tables,odds=2.0,bet=100,is_long=True):
-        pass
-                        
-    def calc_wide_3box(self,data_c,return_tables,odds=2.0,bet=100,is_long=True):
-        pass
-                
+
     def calc_sanrenpuku(self,data_c,return_tables,bet=100,is_long=True):
         acc_dict = {'三連複':0}
         return_dict = {'三連複':0}
@@ -2121,29 +2029,84 @@ class RankSimulater(Simulater):
         print("的中率 :",acc_dict['ワイド'],'/',len(race_id_list))
         print("収支   :",return_dict['ワイド'],'円')
         print("的中レース",wide_list)
+
+
+class TodaySimulater(RankSimulater):
+
+
+    def __init__(self,model):
+        super(TodaySimulater,self).__init__(model)
+        self.is_long = False
+
+
     
-#     odds以上の馬券しか買わない
-    def show_long_results(self, data_c, return_tables, kaime='tansho', odds=2.0, bet = 100):
-        if kaime=='tansho':
-            pass
-        elif kaime=='fukusho':
-            pass
-        elif kaime=='wide':
-            pass
-        elif kaime=='wide_3_box':
-            pass
-        elif kaime=='umaren':
-            pass
-        elif kaime=='umatan':
-            pass
-        elif kaime=='sanrentan':
-            pass
-        elif kaime=='sanrenpuku':
-            pass
+    def calc_tansho(self,data_c,race_id,odds,bet,return_tables):
+        race_id = int(race_id)
+        pred_df = self.return_pred_table(data_c.loc[race_id],is_long=self.is_long)
+        pred_df = pred_df.loc[race_id]
+        pred_df = pred_df.sort_values('scores',ascending=False)
+        pred_1 = pred_df['馬番'].iloc[0]
+        score_1 = pred_df['scores'].iloc[0]
+        score_2 = pred_df['scores'].iloc[1]
+# pred_odds と actual_rank だけ, 当日用に変えればOK
+
+        return_table = return_tables.loc[str(race_id)]
+        rank1 = int(return_table[return_table[0]=='単勝'][1].values[0])
+        tmp_odds = return_table[return_table[0]=='単勝'][2].str.replace(',','')
+        tmp_odds = tmp_odds.str.replace('円','').values[0]
+        real_odds = int(tmp_odds)/100
+
+        not_buy_reason = ''
+        profit = 0
+        # try:
+        #     rank = data_c[data_c['rank']==1].loc[race_id]['馬番']
+        # except Exception as e:
+        #     print(e)
+        #     return 0,False,False,0,not_buy_reason,-1
+            
+        is_atari = False
+        is_buy = True
+
+        if pred_1 == rank1:
+            is_atari = True
+
+            if real_odds < odds:
+                is_buy = False
+                not_buy_reason = 'low odds'
+
+#             上位２着の予測スコアが同じなら賭けない
+        if score_1==score_2:
+            is_buy = False
+            not_buy_reason = 'same score 1 and  2'
+
+
+        if is_atari:
+            if is_buy:
+                profit = real_odds*bet
+            else:
+                profit = 0
         else:
-            print("No such kaime.")
+            if is_buy:
+                profit -= bet
+            else:
+                profit = 0
 
+        return profit, is_atari, is_buy, rank1, not_buy_reason, real_odds
+        
 
+    def get_result_df(self, data_c, return_tables, kaime='tansho', odds=2, bet=100):
+        race_dict = {}
+
+        if kaime=='tansho':
+            for race_id in race_id_list:
+                profit,is_atari,is_buy,actual_rank,not_buy_reason,pred_odds = self.calc_tansho(data_c,race_id,odds,bet,return_tables)
+                row_list = [profit,is_atari,is_buy,actual_rank,not_buy_reason,pred_odds]
+                race_dict[int(race_id)] = row_list
+            tansho_result = pd.DataFrame(race_dict).T
+            tansho_result.rename(columns={0:'profit',1:'is_atari',2:'is_buy',3:'actual_rank',4:'not_buy_reason',5:'real_odds'},inplace=True)
+            return tansho_result
+
+            
 class LearnLGBM():
     
     
