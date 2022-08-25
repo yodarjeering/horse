@@ -2031,8 +2031,10 @@ class RankSimulater(Simulater):
         print("的中レース",wide_list)
 
 
-class TodaySimulater(RankSimulater):
 
+
+
+class TodaySimulater(RankSimulater):
 
     def __init__(self,model):
         super(TodaySimulater,self).__init__(model)
@@ -2092,7 +2094,61 @@ class TodaySimulater(RankSimulater):
                 profit = 0
 
         return profit, is_atari, is_buy, rank1, not_buy_reason, real_odds
+    
+    
+    def return_race_result(self,data_c,race_id,return_tables):
+        race_id = int(race_id)
+        pred_df = self.return_pred_table(data_c.loc[race_id],is_long=self.is_long)
+        return_table  = return_tables.loc[str(race_id)]
+        pred_df = pred_df.loc[race_id]
+        pred_df = pred_df.sort_values('scores',ascending=False)
+        pred_list = [int(pred_df['馬番'].iloc[i]) for i in range(len(pred_df))]
+
+        score_1 = pred_df['scores'].iloc[0]
+        score_2 = pred_df['scores'].iloc[1]
+        is_same_score = False
+
         
+        tansho_row = return_table[return_table[0]=='単勝']
+        fukusho_row = return_table[return_table[0]=='複勝']
+        umaren_row =  return_table[return_table[0]=='馬連']
+        umatan_row =  return_table[return_table[0]=='馬単']
+        wide_row =  return_table[return_table[0]=='ワイド']
+        sanrentan_row =  return_table[return_table[0]=='3連単']
+        sanrenpuku_row =  return_table[return_table[0]=='3連複']
+        
+        actual_rank_list = list(map(int,sanrentan_row[1].str.split(' ').values[0]))
+        
+        odds_tmp =umaren_row[2].str.replace(',','')
+        umaren_odds = int(odds_tmp.str.replace('円','').values[0])/100
+        
+        odds_tmp = tansho_row[2].str.replace(',','')
+        tansho_odds = int(odds_tmp.str.replace('円','').values[0])/100
+        
+        odds_tmp = umatan_row[2].str.replace(',','')
+        umatan_odds = int(odds_tmp.str.replace('円','').values[0])/100
+        
+        odds_tmp = sanrenpuku_row[2].str.replace(',','')
+        sanrenpuku_odds = int(odds_tmp.str.replace('円','').values[0])/100
+        
+        odds_tmp = sanrentan_row[2].str.replace(',','')
+        sanrentan_odds = int(odds_tmp.str.replace('円','').values[0])/100
+        
+        fukusho_odds_list = fukusho_row[2].str.split('円').values[0][0:3]
+        fukusho_odds_list = [i for i in fukusho_odds_list if i!='']
+        fukusho_odds = list(map(lambda x: int(x.replace(',',''))/100 , fukusho_odds_list))
+        wide_odds = list(map(lambda x: int(x.replace(',',''))/100 , wide_row[2].str.split('円').values[0][0:3]))
+        
+        tmp_list = list(map(int,wide_row[1].str.split(' ').tolist()[0]))
+        wide_comb = []
+        for i in range(0,len(tmp_list),2):
+            wide_comb.append(tmp_list[i:i+2])
+        
+        if score_1 == score_2:
+            is_same_score =True
+        
+        
+        return  pred_list,actual_rank_list,tansho_odds,fukusho_odds,umaren_odds,wide_odds,umatan_odds,sanrenpuku_odds,sanrentan_odds,wide_comb
 
     def get_result_df(self, data_c, return_tables, race_id_list, kaime='tansho', odds=2, bet=100):
         race_dict = {}
@@ -2105,6 +2161,26 @@ class TodaySimulater(RankSimulater):
             tansho_result = pd.DataFrame(race_dict).T
             tansho_result.rename(columns={0:'profit',1:'is_atari',2:'is_buy',3:'actual_rank',4:'not_buy_reason',5:'real_odds'},inplace=True)
             return tansho_result
+        
+        if kaime=='all':
+            for race_id in race_id_list:
+                pred_list,actual_rank_list,tansho_odds,fukusho_odds,umaren_odds,wide_odds,umatan_odds,sanrenpuku_odds,sanrentan_odds,wide_comb = self.return_race_result(data_c,race_id,return_tables)
+                row_list = [pred_list,actual_rank_list,tansho_odds,fukusho_odds,umaren_odds,wide_odds,umatan_odds,sanrenpuku_odds,sanrentan_odds,wide_comb]
+                race_dict[int(race_id)] = row_list
+            all_result = pd.DataFrame(race_dict).T
+            all_result.rename(columns={
+                0:'pred_list',
+                1:'actual_rank_list',
+                2:'tansho_odds',
+                3:'fukusho_odds',
+                4:'umaren_odds',
+                5:'wide_odds',
+                6:'umatan_odds',
+                7:'sanrenpuku_odds',
+                8:'sanrentan_odds',
+                9:'wide_comb'
+                },inplace=True)
+            return all_result
 
 
 class LearnLGBM():
