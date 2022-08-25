@@ -2094,7 +2094,7 @@ class TodaySimulater(RankSimulater):
         return profit, is_atari, is_buy, rank1, not_buy_reason, real_odds
         
 
-    def get_result_df(self, data_c, return_tables, kaime='tansho', odds=2, bet=100):
+    def get_result_df(self, data_c, return_tables, race_id_list, kaime='tansho', odds=2, bet=100):
         race_dict = {}
 
         if kaime=='tansho':
@@ -2106,7 +2106,7 @@ class TodaySimulater(RankSimulater):
             tansho_result.rename(columns={0:'profit',1:'is_atari',2:'is_buy',3:'actual_rank',4:'not_buy_reason',5:'real_odds'},inplace=True)
             return tansho_result
 
-            
+
 class LearnLGBM():
     
     
