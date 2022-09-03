@@ -63,16 +63,6 @@ def load_csv(load_path):
     df = pd.read_csv(load_path, index_col=0)
     return df
 
-def gain(return_func, x_, n_samples=100,lower=50,t_range=[0.5,3.5]):
-    gain = {}
-    for i in range(n_samples):
-        threshold = t_range[1] * (i/n_samples) + t_range[0] *(1-i/n_samples)
-        n_bets, return_rate, n_hits,std = return_func(x_, threshold)
-        if n_bets > lower:
-            gain[threshold] = {'return_rate':return_rate,'n_hits':n_hits,'std':std,'n_bets':n_bets}
-    return pd.DataFrame(gain).T
-
-
 
 def plot(g,label=''):
     plt.fill_between(g.index,y1 = g['return_rate'] - g['std'],y2=g['return_rate']+g['std'],alpha=0.3)
@@ -92,23 +82,6 @@ def update_data(old, new):
     filtered_old = old[~old.index.isin(new.index)]
     return pd.concat([filtered_old, new])
 
-def scrape_race_results(race_id_list, pre_race_results={}):
-    race_results = pre_race_results
-    for race_id in race_id_list:
-        if race_id in race_results.keys():
-            continue
-        try:
-            time.sleep(0.5)
-            url = "https://db.netkeiba.com/race/" + race_id
-            race_results[race_id] = pd.read_html(url)[0]
-        except IndexError:
-            continue
-        except Exception as e:
-            print(e)
-            break
-        except:
-            break
-    return race_results
 
 def plot_importances(xgb_model, x_test):
     importances = pd.DataFrame(
@@ -130,259 +103,36 @@ def make_data(data_,test_rate=0.8,is_rus=True):
     else:
         return x_train,y_train,x_test,y_test
 
-def make_check_data(data_,test_rate=0.8):
-    data_ = data_.sort_values('date')
-    x_ = data_.drop(['rank','date'],axis=1)
-    y_ = data_['rank']
+def make_race_id_list():
 
-    test_rate = int(test_rate*len(x_))
-    x_train, x_check = x_.iloc[:test_rate],x_.iloc[test_rate:]
-    y_train, y_check = y_.iloc[:test_rate],y_.iloc[test_rate:]
+    race_id_list = []
 
-    return x_check,y_check
-
-def grid_search(x_train,y_train,x_test,y_test):
-    trains = xgb.DMatrix(x_train.astype(float), label=y_train)
-    tests = xgb.DMatrix(x_test.astype(float), label=y_test)
-
-    base_params = {
-        'booster': 'gbtree',
-        'objective':'binary:logistic',
-        'eval_metric': 'rmse',
-        'random_state':100,
-        'use_label_encoder':False
-    }
-
-    watchlist = [(trains, 'train'), (tests, 'eval')]
-    tmp_params = copy.deepcopy(base_params)
+    for place in range(1, 11, 1):
+        for kai in range(1, 6, 1):
+            for day in range(1, 13, 1):
+                for r in range(1, 13, 1):
+                    race_id = "2022" + str(place).zfill(2) + str(kai).zfill(2) +\
+            str(day).zfill(2) + str(r).zfill(2)
+                    race_id_list.append(race_id)
     
-#     インナー関数
-    def optimizer(trial):
-        eta = trial.suggest_uniform('eta', 0.01, 0.3)
-        max_depth = trial.suggest_int('max_depth', 3, 20)
-        __lambda = trial.suggest_uniform('lambda', 0.7, 2)
-        n_estimators = trial.suggest_int('n_estimators', 3, 20)
-        learning_rate = trial.suggest_uniform('lambda', 0.01, 1)
-        reg_alpha = trial.suggest_uniform('reg_alpha', 0.01, 1)
-        reg_lambda = trial.suggest_uniform('reg_lambda', 0.01, 1)
-        importance_type = trial.suggest_categorical('importance_type',
-                                                    ['gain', 'weight', 'cover','total_gain','total_cover'])
-
-        tmp_params['eta'] = eta
-        tmp_params['max_depth'] = max_depth
-        tmp_params['lambda'] = __lambda
-        tmp_params['n_estimators'] = n_estimators
-        tmp_params['learning_rate'] = learning_rate
-        tmp_params['reg_alpha'] = reg_alpha
-        tmp_params['reg_lambda'] = reg_lambda
-        tmp_params['importance_type'] = importance_type
-        model = xgb.train(tmp_params, trains, num_boost_round=50)
-        predicts = model.predict(tests)
-        r2 = r2_score(y_test, predicts)
-        print(f'#{trial.number}, Result: {r2}, {trial.params}')
-        return r2
-    
-def predict(race_id,p,hr,r,return_tables,lgb_clf,date):
-    data =  ShutubaTable.scrape([str(race_id)], date)
-    st = ShutubaTable(data)
-    st.preprocessing()
-    st.merge_horse_results(hr)
-    st.merge_peds(p.peds_e)
-    st.process_categorical(r.le_horse, r.le_jockey, r.data_pe)
-    return_tables.rename(columns={'0':0,'1':1,'2':2,'3':3},inplace=True)
-    me_st = ModelEvaluator(lgb_clf, return_tables)
-
-    
-    #予測
-    scores = me_st.predict_proba(st.data_c.drop(['date'],axis=1),train=False)
-    pred = st.data_c[['馬番']].copy()
-    pred['scores'] = scores
-    print(pred.loc[race_id].sort_values('scores',ascending=False))
-    
-def horse_results_scrape(horse_id_list):
-    #horse_idをkeyにしてDataFrame型を格納
-    horse_results = {}
-    for horse_id in tqdm(horse_id_list):
-#         for horse_id in horse_id_list:
-        try:
-            url = 'https://db.netkeiba.com/horse/' + horse_id
-            df = pd.read_html(url)[3]
-            #受賞歴がある馬の場合、3番目に受賞歴テーブルが来るため、4番目のデータを取得する
-            if df.columns[0]=='受賞歴':
-                df = pd.read_html(url)[4]
-            df.index = [horse_id] * len(df)
-            horse_results[horse_id] = df
-            time.sleep(0.5)
-        except IndexError:
-            continue
-        except Exception as e:
-            print(e)
-            break
-        except:
-            break
-
-    #pd.DataFrame型にして一つのデータにまとめる        
-    horse_results_df = pd.concat([horse_results[key] for key in horse_results])
-
-    return horse_results_df
-
-def return_scrape(race_id_list):
-    """
-    払い戻し表データをスクレイピングする関数
-
-    Parameters:
-    ----------
-    race_id_list : list
-        レースIDのリスト
-
-    Returns:
-    ----------
-    return_tables_df : pandas.DataFrame
-        全払い戻し表データをまとめてDataFrame型にしたもの
-    """
-
-    return_tables = {}
-    for race_id in tqdm(race_id_list):
-        try:
-            url = "https://db.netkeiba.com/race/" + race_id
-
-            #普通にスクレイピングすると複勝やワイドなどが区切られないで繋がってしまう。
-            #そのため、改行コードを文字列brに変換して後でsplitする
-            f = urllib.request.urlopen(url)
-            html = f.read()
-            html = html.replace(b'<br />', b'br')
-            dfs = pd.read_html(html)
-
-            #dfsの1番目に単勝〜馬連、2番目にワイド〜三連単がある
-            df = pd.concat([dfs[1], dfs[2]])
-
-            df.index = [race_id] * len(df)
-            return_tables[race_id] = df
-            time.sleep(0.5)
-        except IndexError:
-            continue
-        except Exception as e:
-            print(e)
-            break
-        except:
-            break
-
-    #pd.DataFrame型にして一つのデータにまとめる
-    return_tables_df = pd.concat([return_tables[key] for key in return_tables])
-    return return_tables_df
-
-def results_scrape(race_id_list):
-    #race_idをkeyにしてDataFrame型を格納
-    race_results = {}
-    for race_id in tqdm(race_id_list):
-        time.sleep(0.5)
-        try:
-            url = "https://db.netkeiba.com/race/" + race_id
-            #メインとなるテーブルデータを取得
-            df = pd.read_html(url)[0]
-            html = requests.get(url)
-            html.encoding = "EUC-JP"
-            soup = BeautifulSoup(html.text, "html.parser")
-
-            #天候、レースの種類、コースの長さ、馬場の状態、日付をスクレイピング
-            texts = (
-                soup.find("div", attrs={"class": "data_intro"}).find_all("p")[0].text
-                + soup.find("div", attrs={"class": "data_intro"}).find_all("p")[1].text
-            )
-            info = re.findall(r'\w+', texts)
-            for text in info:
-                if text in ["芝", "ダート"]:
-                    df["race_type"] = [text] * len(df)
-                if "障" in text:
-                    df["race_type"] = ["障害"] * len(df)
-                if "m" in text:
-                    df["course_len"] = [int(re.findall(r"\d+", text)[0])] * len(df)
-                if text in ["良", "稍重", "重", "不良"]:
-                    df["ground_state"] = [text] * len(df)
-                if text in ["曇", "晴", "雨", "小雨", "小雪", "雪"]:
-                    df["weather"] = [text] * len(df)
-                if "年" in text:
-                    df["date"] = [text] * len(df)
-
-            #馬ID、騎手IDをスクレイピング
-            horse_id_list = []
-            horse_a_list = soup.find("table", attrs={"summary": "レース結果"}).find_all(
-                "a", attrs={"href": re.compile("^/horse")}
-            )
-            for a in horse_a_list:
-                horse_id = re.findall(r"\d+", a["href"])
-                horse_id_list.append(horse_id[0])
-            jockey_id_list = []
-            jockey_a_list = soup.find("table", attrs={"summary": "レース結果"}).find_all(
-                "a", attrs={"href": re.compile("^/jockey")}
-            )
-            for a in jockey_a_list:
-                jockey_id = re.findall(r"\d+", a["href"])
-                jockey_id_list.append(jockey_id[0])
-            df["horse_id"] = horse_id_list
-            df["jockey_id"] = jockey_id_list
-
-            #インデックスをrace_idにする
-            df.index = [race_id] * len(df)
-
-            race_results[race_id] = df
-        #存在しないrace_idを飛ばす
-        except IndexError:
-            continue
-        #wifiの接続が切れた時などでも途中までのデータを返せるようにする
-        except Exception as e:
-            print(e)
-            break
-        #Jupyterで停止ボタンを押した時の対処
-        except:
-            break
-
-    #pd.DataFrame型にして一つのデータにまとめる
-    race_results_df = pd.concat([race_results[key] for key in race_results])
-
-    return race_results_df
-
-def peds_scrape(horse_id_list):
-    peds_dict = {}
-    for horse_id in tqdm(horse_id_list):
-#         for horse_id in horse_id_list:
-        try:
-            url = "https://db.netkeiba.com/horse/ped/" + horse_id
-        
-            df = pd.read_html(url)[0]
-
-            #重複を削除して1列のSeries型データに直す
-            generations = {}
-            for i in reversed(range(5)):
-                generations[i] = df[i]
-                df.drop([i], axis=1, inplace=True)
-                df = df.drop_duplicates()
-            ped = pd.concat([generations[i] for i in range(5)]).rename(horse_id)
-
-            peds_dict[horse_id] = ped.reset_index(drop=True)
-            time.sleep(0.5)
-        except IndexError:
-            continue
-        except Exception as e:
-            print(e)
-            break
-        except:
-            break
-
-    #列名をpeds_0, ..., peds_61にする
-    peds_df = pd.concat([peds_dict[key] for key in peds_dict],
-                        axis=1).T.add_prefix('peds_')
-    peds_df.index =peds_df.index.astype(int)
-
-    return peds_df
+    return race_id_list
 
 
+def save_pickle(save_path,object_):
+    with open(save_path, mode="wb") as f:
+        pickle.dump(object_, f)
+
+def load_pickle(save_path):
+    with open(save_path, mode="rb") as f:
+        object_ = pickle.load(f)
+    return object_
 
 class HorseResults:
     def __init__(self, horse_results):
         self.horse_results = horse_results[['日付', '着順', '賞金', '着差', '通過',
                                             '開催', '距離']]
         self.preprocessing()
+        
     @classmethod
     def read_pickle(cls, path_list):
         df = pd.concat([pd.read_pickle(path) for path in path_list])
@@ -1395,13 +1145,14 @@ class Peds:
         self.error_idx_list_v = error_idx_list
         self.peds_vec = df.astype('float')
 
+
 class Simulater():
-    
     
     def __init__(self, model):
         self.model = model
         self.return_tables = None
         self.pred_df = None
+        self.is_long = True
     
 
     #     当日のデータでシミュレートするとあかん
@@ -1433,95 +1184,6 @@ class Simulater():
         # return_tables_df.index = return_tables_df.index.astype(int)
         self.return_tables = return_tables_df
     
-
-    def return_pred_table(self,st,return_tables):
-        me_st = ModelEvaluator(self.model, return_tables)
-        #予測
-        scores = me_st.predict_proba(st.data_c.drop(['date'],axis=1),train=False)
-        pred = st.data_c[['馬番']].copy()
-        pred['scores'] = scores
-        pred.index = pred.index.astype(int)
-        return pred
-        
-        
-    def show_results(self , st ,race_id_list ,bet = 100):
-        self.return_table_today(race_id_list)
-        return_tables = self.return_tables.copy()
-        acc_dict = {'単勝':0,'複勝':0,'ワイド':0}
-        return_dict = {'単勝':0,'複勝':0,'ワイド':0}
-        target_race_dict = {}
-        self.pred_df = self.return_pred_table(st,return_tables)
-        tansho_list = []
-        fukusho_list = []
-        wide_list =[]
-
-        for race_id in race_id_list:
-            df_  = self.return_tables.loc[race_id]
-            print("-------------------")
-            print("predict")
-            pred_df = self.pred_df.loc[int(race_id)]
-            pred_df = pred_df.sort_values('scores',ascending=False)
-            print(pred_df.iloc[:3])
-            print("actual")
-            print(self.return_tables.loc[race_id])
-            pred_1 = str(pred_df['馬番'].iloc[0])
-            pred_2 = str(pred_df['馬番'].iloc[1])
-
-
-            if  pred_1 == df_[df_[0]=='単勝'][1].values[0]:
-                acc_dict['単勝'] += 1
-                profit = int(df_[df_[0]=='単勝'][2].values[0].replace('円','').replace(',',''))
-                return_dict['単勝'] += profit
-                acc_dict['複勝'] += 1
-                return_index = df_[df_[0]=='複勝'][1].str.split(' ')[0].index(str(pred_1))
-                profit = int(df_[df_[0]=='複勝'][2].str.split('円')[0][return_index].replace(',',''))
-                return_dict['複勝'] += profit 
-                tansho_list.append(race_id[-2:])
-                fukusho_list.append(race_id[-2:])
-
-            elif pred_1 in df_[df_[0]=='複勝'][1].str.split(' ')[0]:
-                acc_dict['複勝'] += 1
-                return_index = df_[df_[0]=='複勝'][1].str.split(' ')[0].index(str(pred_1))
-                profit = int(df_[df_[0]=='複勝'][2].str.split('円')[0][return_index].replace(',',''))
-                return_dict['複勝'] += profit 
-                fukusho_list.append(race_id[-2:])
-                
-
-            for i in range(len(df_[df_[0]=='ワイド'][1].str.split(' ')[0])//2):
-                if set([pred_1,pred_2])==set(df_[df_[0]=='ワイド'][1].str.split(' ')[0][i:i+2]):
-                    if i!=0:
-                        return_index = i-1
-                    else:
-                        return_index = i
-                    profit = int(df_[df_[0]=='ワイド'][2].str.split('円')[0][return_index].replace(',',''))
-                    return_dict['ワイド'] += profit
-                    print("profit",profit)
-                    acc_dict['ワイド'] += 1
-                    wide_list.append(race_id[-2:])
-                    break
-        
-        
-        for i, key in enumerate(acc_dict):
-            return_dict[key] -= bet * len(race_id_list)
-        
-        print("---------------------")
-        print("単勝")
-        print("的中率 :",acc_dict['単勝'],'/',len(race_id_list))
-        print("収支   :",return_dict['単勝'],'円')
-        print("的中レース",tansho_list)
-        print("---------------------")
-        print("複勝")
-        print("的中率 :",acc_dict['複勝'],'/',len(race_id_list))
-        print("収支   :",return_dict['複勝'],'円')
-        print("的中レース",fukusho_list)
-        print("---------------------")
-        print("ワイド")
-        print("的中率 :",acc_dict['ワイド'],'/',len(race_id_list))
-        print("収支   :",return_dict['ワイド'],'円')
-        print("的中レース",wide_list)
-
-class RankSimulater(Simulater):
-    
     
     def return_pred_table(self,data_c,is_long=False):
         # is_long って何？
@@ -1535,84 +1197,6 @@ class RankSimulater(Simulater):
         pred = pred.sort_values('scores',ascending=False)
         return pred
 
-# 的中レースの分布を表示できるように
-
-    def show_results(self , st ,race_id_list ,bet = 100):
-        self.return_table_today(race_id_list)
-        return_tables = self.return_tables.copy()
-        acc_dict = {'単勝':0,'複勝':0,'ワイド':0}
-        return_dict = {'単勝':0,'複勝':0,'ワイド':0}
-        # target_race_dict  = {}
-        self.pred_df = self.return_pred_table(st.data_c)
-        tansho_list = []
-        fukusho_list = []
-        wide_list =[]
-
-        for race_id in race_id_list:
-            df_  = return_tables.loc[race_id]
-            print("-------------------")
-            print("predict")
-            pred_df = self.pred_df.loc[int(race_id)]
-            pred_df = pred_df.sort_values('scores',ascending=False)
-            print(pred_df.iloc[:3])
-            print("actual")
-            print(return_tables.loc[race_id])
-            pred_1 = str(pred_df['馬番'].iloc[0])
-            pred_2 = str(pred_df['馬番'].iloc[1])
-
-
-            if  pred_1 == df_[df_[0]=='単勝'][1].values[0]:
-                acc_dict['単勝'] += 1
-                profit = int(df_[df_[0]=='単勝'][2].values[0].replace('円','').replace(',',''))
-                return_dict['単勝'] += profit
-                acc_dict['複勝'] += 1
-                return_index = df_[df_[0]=='複勝'][1].str.split(' ')[0].index(str(pred_1))
-                profit = int(df_[df_[0]=='複勝'][2].str.split('円')[0][return_index].replace(',',''))
-                return_dict['複勝'] += profit 
-                tansho_list.append(race_id[-2:])
-                fukusho_list.append(race_id[-2:])
-
-            elif pred_1 in df_[df_[0]=='複勝'][1].str.split(' ')[0]:
-                acc_dict['複勝'] += 1
-                return_index = df_[df_[0]=='複勝'][1].str.split(' ')[0].index(str(pred_1))
-                profit = int(df_[df_[0]=='複勝'][2].str.split('円')[0][return_index].replace(',',''))
-                return_dict['複勝'] += profit 
-                fukusho_list.append(race_id[-2:])
-                
-
-            for i in range(len(df_[df_[0]=='ワイド'][1].str.split(' ')[0])//2):
-                if set([pred_1,pred_2])==set(df_[df_[0]=='ワイド'][1].str.split(' ')[0][i:i+2]):
-                    if i!=0:
-                        return_index = i-1
-                    else:
-                        return_index = i
-                    profit = int(df_[df_[0]=='ワイド'][2].str.split('円')[0][return_index].replace(',',''))
-                    return_dict['ワイド'] += profit
-                    print("profit",profit)
-                    acc_dict['ワイド'] += 1
-                    wide_list.append(race_id[-2:])
-                    break
-        
-        
-        for i, key in enumerate(acc_dict):
-            return_dict[key] -= bet * len(race_id_list)
-        
-        print("---------------------")
-        print("単勝")
-        print("的中率 :",acc_dict['単勝'],'/',len(race_id_list))
-        print("収支   :",return_dict['単勝'],'円')
-        print("的中レース",tansho_list)
-        print("---------------------")
-        print("複勝")
-        print("的中率 :",acc_dict['複勝'],'/',len(race_id_list))
-        print("収支   :",return_dict['複勝'],'円')
-        print("的中レース",fukusho_list)
-        print("---------------------")
-        print("ワイド")
-        print("的中率 :",acc_dict['ワイド'],'/',len(race_id_list))
-        print("収支   :",return_dict['ワイド'],'円')
-        print("的中レース",wide_list)
-    
 #     odds以上の馬券しか買わない
     def get_result_df(self, data_c, return_tables, kaime='tansho', is_long=True, odds=2.0, bet = 100):
         race_id_list = list(set(data_c.index))
@@ -1629,17 +1213,25 @@ class RankSimulater(Simulater):
             tansho_result.rename(columns={0:'profit',1:'is_atari',2:'is_buy',3:'actual_rank',4:'not_buy_reason',5:'pred_odds'},inplace=True)
             return tansho_result
 
-        elif kaime=='fukusho':
+        if kaime=='all':
             for race_id in race_id_list:
-                pred_list,tansho_odds_list,actual_rank_list,fukusho_odds_list,fukusho_list = self.calc_fukusho(data_c,race_id,is_long,return_tables)
-                pred_list = list(map(int,pred_list))
-                fukusho_list = list(map(int,fukusho_list))
-                row_list = [pred_list,tansho_odds_list,actual_rank_list,fukusho_odds_list,fukusho_list]
-                race_dict[race_id] = row_list
-
-            fukusho_result = pd.DataFrame(race_dict).T
-            fukusho_result.rename(columns={0:'pred list',1:'tansho odds list',2:'actual rank list',3:'fukusho odds list',4:'fukusho list'},inplace=True)
-            return fukusho_result
+                pred_list,actual_rank_list,tansho_odds,fukusho_odds,umaren_odds,wide_odds,umatan_odds,sanrenpuku_odds,sanrentan_odds,wide_comb = self.return_race_result(data_c,race_id,return_tables)
+                row_list = [pred_list,actual_rank_list,tansho_odds,fukusho_odds,umaren_odds,wide_odds,umatan_odds,sanrenpuku_odds,sanrentan_odds,wide_comb]
+                race_dict[int(race_id)] = row_list
+            all_result = pd.DataFrame(race_dict).T
+            all_result.rename(columns={
+                0:'pred_list',
+                1:'actual_rank_list',
+                2:'tansho_odds',
+                3:'fukusho_odds',
+                4:'umaren_odds',
+                5:'wide_odds',
+                6:'umatan_odds',
+                7:'sanrenpuku_odds',
+                8:'sanrentan_odds',
+                9:'wide_comb'
+                },inplace=True)
+            return all_result
         
         elif kaime=='wide':
             pass
@@ -1656,446 +1248,168 @@ class RankSimulater(Simulater):
         else:
             print("No such kaime.")
 
-    def calc_tansho(self,data_c,race_id,odds,bet,is_long):
-        pred_df = self.return_pred_table(data_c.loc[race_id],is_long=is_long)
+    def return_race_result(self, data_c ,race_id, return_tables):
+        race_id = int(race_id)
+        pred_df = self.return_pred_table(data_c.loc[race_id],is_long=self.is_long)
         pred_df = pred_df.loc[race_id]
         pred_df = pred_df.sort_values('scores',ascending=False)
-        pred_1 = pred_df['馬番'].iloc[0]
+        
+        return_table  = return_tables.loc[race_id]
+        
+        
+        pred_list = [int(pred_df['馬番'].iloc[i]) for i in range(len(pred_df))]
+
         score_1 = pred_df['scores'].iloc[0]
         score_2 = pred_df['scores'].iloc[1]
-        pred_odds = data_c[data_c['馬番']==int(pred_1)].loc[race_id]['単勝']
-        actual_rank = data_c[data_c['馬番']==int(pred_1)].loc[race_id]['rank']
-        not_buy_reason = ''
-        profit = 0
+        is_same_score = False
 
         try:
-            rank = data_c[data_c['rank']==1].loc[race_id]['馬番']
+        
+            tansho_row = return_table[return_table[0]=='単勝']
+            fukusho_row = return_table[return_table[0]=='複勝']
+            umaren_row =  return_table[return_table[0]=='馬連']
+            umatan_row =  return_table[return_table[0]=='馬単']
+            wide_row =  return_table[return_table[0]=='ワイド']
+            sanrentan_row =  return_table[return_table[0]=='三連単']
+            sanrenpuku_row =  return_table[return_table[0]=='三連複']
+        
+            if score_1 == score_2:
+                is_same_score =True
+                
+            # １着が同着    
+            if int(tansho_row[1].str.count('br'))==1:
+                actual_tmp0 = sanrentan_row[1].str.split('br').values[0][0]
+                actual_tmp1 = sanrentan_row[1].str.split('br').values[0][1]
+                actual_rank_list0 = list(map(int,actual_tmp0.split('→')))
+                actual_rank_list1 = list(map(int,actual_tmp1.split('→')))
+                actual_rank_list = [actual_rank_list0,actual_rank_list1]
+                
+                tansho_odds_list = tansho_row[2].str.split('br').values[0][0:3]
+                tansho_odds_list = [i for i in tansho_odds_list if i!='']
+                tansho_odds = list(map(lambda x: int(x.replace(',',''))/100 ,tansho_odds_list))
+                
+                umatan_odds_list = umatan_row[2].str.split('br').values[0][0:3]
+                umatan_odds_list = [i for i in umatan_odds_list if i!='']
+                umatan_odds = list(map(lambda x: int(x.replace(',',''))/100 ,umatan_odds_list))
+                
+                sanrentan_odds_list = sanrentan_row[2].str.split('br').values[0][0:3]
+                sanrentan_odds_list = [i for i in sanrentan_odds_list if i!='']
+                sanrentan_odds = list(map(lambda x: int(x.replace(',',''))/100 ,sanrentan_odds_list))
+        
+                umaren_odds = int(umaren_row[2])/100
+                sanrenpuku_odds = int(sanrenpuku_row[2])/100
+                fukusho_odds_list = fukusho_row[2].str.split('br').values[0][0:3]
+                fukusho_odds_list = [i for i in fukusho_odds_list if i!='']
+                fukusho_odds = list(map(lambda x: int(x.replace(',',''))/100 , fukusho_odds_list))
+                
+                wide_odds = list(map(lambda x: int(x.replace(',',''))/100 , wide_row[2].str.split('br').values[0][0:3]))
+                
+                tmp_list = list(map(lambda x:x.replace(' - ',' '),wide_row[1].str.split('br').values[0][0:3]))
+                wide_comb = []
+                for tl in tmp_list:
+                    pair_list = list(map(lambda x: int(x),tl.split(' ')))
+                    wide_comb.append(pair_list)
+                    
+            # S2
+            elif int(umaren_row[1].str.count('br'))==1:
+                actual_tmp0 = sanrentan_row[1].str.split('br').values[0][0]
+                actual_tmp1 = sanrentan_row[1].str.split('br').values[0][1]
+                actual_rank_list0 = list(map(int,actual_tmp0.split('→')))
+                actual_rank_list1 = list(map(int,actual_tmp1.split('→')))
+                actual_rank_list = [actual_rank_list0,actual_rank_list1]
+                
+                tansho_odds = int(tansho_row[2])/100
+                fukusho_odds_list = fukusho_row[2].str.split('br').values[0][0:3]
+                fukusho_odds_list = [i for i in fukusho_odds_list if i!='']
+                fukusho_odds = list(map(lambda x: int(x.replace(',',''))/100 , fukusho_odds_list))
+                
+                umaren_odds_list = umaren_row[2].str.split('br').values[0][0:3]
+                umaren_odds_list = [i for i in umaren_odds_list if i!='']
+                umaren_odds = list(map(lambda x: int(x.replace(',',''))/100 ,umaren_odds_list))
+                
+                umatan_odds_list = umatan_row[2].str.split('br').values[0][0:3]
+                umatan_odds_list = [i for i in umatan_odds_list if i!='']
+                umatan_odds = list(map(lambda x: int(x.replace(',',''))/100 ,umatan_odds_list))
+                
+                wide_odds = list(map(lambda x: int(x.replace(',',''))/100 , wide_row[2].str.split('br').values[0][0:3]))
+                
+                tmp_list = list(map(lambda x:x.replace(' - ',' '),wide_row[1].str.split('br').values[0][0:3]))
+                wide_comb = []
+                for tl in tmp_list:
+                    pair_list = list(map(lambda x: int(x),tl.split(' ')))
+                    wide_comb.append(pair_list)
+                    
+                sanrenpuku_odds = int(sanrenpuku_row[2])/100
+                sanrentan_odds_list = sanrentan_row[2].str.split('br').values[0][0:3]
+                sanrentan_odds_list = [i for i in sanrentan_odds_list if i!='']
+                sanrentan_odds = list(map(lambda x: int(x.replace(',',''))/100 ,sanrentan_odds_list))
+            
+            # S3
+            elif int(sanrenpuku_row[1].str.count('br'))==1:
+                actual_tmp0 = sanrentan_row[1].str.split('br').values[0][0]
+                actual_tmp1 = sanrentan_row[1].str.split('br').values[0][1]
+                actual_rank_list0 = list(map(int,actual_tmp0.split('→')))
+                actual_rank_list1 = list(map(int,actual_tmp1.split('→')))
+                actual_rank_list = [actual_rank_list0,actual_rank_list1]
+                
+                tansho_odds = int(tansho_row[2])/100
+                fukusho_odds_list = fukusho_row[2].str.split('br').values[0][0:4]
+                fukusho_odds_list = [i for i in fukusho_odds_list if i!='']
+                fukusho_odds = list(map(lambda x: int(x.replace(',',''))/100 , fukusho_odds_list))
+                umaren_odds = int(umaren_row[2])/100
+                umatan_odds = int(umatan_row[2])/100
+                
+                wide_odds = list(map(lambda x: int(x.replace(',',''))/100 , wide_row[2].str.split('br').values[0][0:5]))
+                tmp_list = list(map(lambda x:x.replace(' - ',' '),wide_row[1].str.split('br').values[0][0:5]))
+                wide_comb = []
+                for tl in tmp_list:
+                    pair_list = list(map(lambda x: int(x),tl.split(' ')))
+                    wide_comb.append(pair_list)
+                
+                sanrenpuku_odds_list = sanrenpuku_row[2].str.split('br').values[0][0:3]
+                sanrenpuku_odds_list = [i for i in sanrenpuku_odds_list if i!='']
+                sanrenpuku_odds = list(map(lambda x: int(x.replace(',',''))/100 ,sanrenpuku_odds_list))
+                
+                sanrentan_odds_list = sanrentan_row[2].str.split('br').values[0][0:3]
+                sanrentan_odds_list = [i for i in sanrentan_odds_list if i!='']
+                sanrentan_odds = list(map(lambda x: int(x.replace(',',''))/100 ,sanrentan_odds_list))
+            else:
+                actual_rank_list = list(map(int,sanrentan_row[1].str.split('→').values[0]))
+                
+                tansho_odds = int(tansho_row[2])/100
+                umaren_odds = int(umaren_row[2])/100
+                sanrenpuku_odds = int(sanrenpuku_row[2])/100
+                fukusho_odds_list = fukusho_row[2].str.split('br').values[0][0:3]
+                fukusho_odds_list = [i for i in fukusho_odds_list if i!='']
+                fukusho_odds = list(map(lambda x: int(x.replace(',',''))/100 , fukusho_odds_list))
+                
+                wide_odds = list(map(lambda x: int(x.replace(',',''))/100 , wide_row[2].str.split('br').values[0][0:3]))
+                
+                tmp_list = list(map(lambda x:x.replace(' - ',' '),wide_row[1].str.split('br').values[0][0:3]))
+                wide_comb = []
+                for tl in tmp_list:
+                    pair_list = list(map(lambda x: int(x),tl.split(' ')))
+                    wide_comb.append(pair_list)
+                
+                umatan_odds = int(umatan_row[2])/100
+                
+                sanrentan_odds = int(sanrentan_row[2])/100
+                
         except Exception as e:
             print(e)
-            return 0,False,False,0,not_buy_reason,-1
-            
-        is_atari = False
-        is_buy = True
-
-        if type(rank)==pd.core.series.Series:
-            is_atari = (pred_1 == rank.values[0] or pred_1 == rank.values[1])
-        elif pred_1 == rank:
-            is_atari = True
-
-#             上位２着の予測スコアが同じなら賭けない
-        if score_1==score_2:
-            is_buy = False
-            not_buy_reason = 'same score 1 and  2'
-        
-        if pred_odds < odds:
-            is_buy = False
-            not_buy_reason = 'low pred odds'
-
-
-        if is_atari:
-            if is_buy:
-                profit = pred_odds*bet
-            else:
-                profit = 0
-        else:
-            if is_buy:
-                profit -= bet
-            else:
-                profit = 0
-
-        return profit, is_atari, is_buy, actual_rank, not_buy_reason, pred_odds
-        
-
-
-    def calc_fukusho(self,data_c,race_id,is_long,return_tables):
-        pred_df = self.return_pred_table(data_c.loc[race_id],is_long=is_long)
-        return_table  = return_tables.loc[race_id]
-        pred_df = pred_df.loc[race_id]
-        pred_df = pred_df.sort_values('scores',ascending=False)
-        pred_list = [str(pred_df['馬番'].iloc[i]) for i in range(3)]
-
-        score_1 = pred_df['scores'].iloc[0]
-        score_2 = pred_df['scores'].iloc[1]
-        # ! 単勝オッズで計算
-        tansho_odds_list = [data_c[data_c['馬番']==int(pr)].loc[race_id]['単勝'] for pr in pred_list]
-        actual_rank_list = [data_c[data_c['馬番']==int(pr)].loc[race_id]['rank'] for pr in pred_list]
-        fukusho_odds_list = [-1 for _ in pred_list]
-        
-        not_buy_reason = ''
-        profit = 0
-        fukusho_list = return_table[return_table[0]=='複勝'][1].str.split('br').tolist()[0]
-
-        """
-            return_table.iloc[0]が単勝
-            return_table.iloc[1]が複勝, etc..
-            return_table.iloc[x][1] が１着の馬番
-            return_table.iloc[x][2] がodds
-            return_table.iloc[x][3] が人気
-        """
-
-        is_atari = False
-        is_buy = True
-
-        for i in range(len(pred_list)):
-            if pred_list[i] in fukusho_list:
-                # is_atari = True
-                return_index = return_table[return_table[0]=='複勝'][1].str.split('br').tolist()[0].index(pred_list[i])
-                fukusho_odds_list[i] = int(return_table[return_table[0]=='複勝'][2].str.split('br').tolist()[0][return_index].replace(',',''))/100
-        
-        if score_1==score_2:
-            is_buy = False
-            not_buy_reason = 'same score 1 and 2'
-
-        
-        return  pred_list,tansho_odds_list,actual_rank_list,fukusho_odds_list,fukusho_list
-
-
-    def calc_sanrenpuku(self,data_c,return_tables,bet=100,is_long=True):
-        acc_dict = {'三連複':0}
-        return_dict = {'三連複':0}
-        sanrenpuku_list = []
-        race_id_list = list(set(data_c.index))
-        not_bet_count = 0
+            print(race_id)
+            return
         
         
-        for race_id in race_id_list: # race_id : int
-            pred_df = self.return_pred_table(data_c.loc[race_id],is_long=is_long)
-            df_  = return_tables.loc[race_id]
-            pred_df = pred_df.loc[race_id]
-            pred_df = pred_df.sort_values('scores',ascending=False)
-            pred_1 = pred_df['馬番'].iloc[0]
-            pred_2 = pred_df['馬番'].iloc[1]
-            try:
-                pred_3 = pred_df['馬番'].iloc[2]
-            except:
-                print("race_id",race_id)
-                print("pred_df",pred_df)
-#             上位２着の予測スコアが同じなら賭けない
-            score_1 = pred_df['scores'].iloc[0]
-            score_2 = pred_df['scores'].iloc[1] 
-            
-#             data_cから観測できる odds は100をかけた時の ×odds だが, return_tables の オッズは, 100円をかけた時の払い戻し金額
-            odds_tmp = df_[df_[0]=='三連複'][2].values[0].replace(',','').split('br')
-            if len(odds_tmp)==1:
-                odds = int(odds_tmp[0])
-            else:
-                odds = int(odds_tmp[0])
-                odds2 = int(odds_tmp[1])
-
-            if score_1 != score_2:
-#                 当たってた時
-                try:
-                    if [int(i) for i in df_[df_[0]=='三連複'][1].values[0].replace(' ','').split('-')] == sorted([pred_1,pred_2,pred_3]):
-                        acc_dict['三連複'] += 1
-                        profit = (bet/100)*odds
-                        return_dict['三連複'] += profit
-                except:
-                    print()
-                    print('race_id',race_id)
-            else:
-                not_bet_count += 1
-            
-        real_race_len = len(race_id_list) - not_bet_count
-        return_dict['三連複'] -= bet * real_race_len
-#         この辺のロジック同じだから, 関数でまとめたい
-        print("---------------------")
-        print("not_bet_count",not_bet_count)
-        print("三連複")
-        print("的中率 :",acc_dict['三連複'],'/',real_race_len)
-        print("的中% :",'{:.2f}'.format((acc_dict['三連複']/real_race_len)*100),'%')
-        print("収支   :",return_dict['三連複'],'円')
-    
-    def calc_sanrenpuku_box(self,data_c,return_tables,odds=2.0,bet=100,is_long=True):
-        pass
-    
-    def calc_sanrentan(self,data_c,return_tables,bet=100,is_long=True):
-        acc_dict = {'三連単':0}
-        return_dict = {'三連単':0}
-        sanrenpuku_list = []
-        race_id_list = list(set(data_c.index))
-        not_bet_count = 0
-        
-        
-        for race_id in race_id_list: # race_id : int
-            pred_df = self.return_pred_table(data_c.loc[race_id],is_long=is_long)
-            df_  = return_tables.loc[int(race_id)]
-            pred_df = pred_df.loc[race_id]
-            pred_df = pred_df.sort_values('scores',ascending=False)
-            pred_1 = pred_df['馬番'].iloc[0]
-            pred_2 = pred_df['馬番'].iloc[1]
-            try:
-                pred_3 = pred_df['馬番'].iloc[2]
-            except:
-                print("race_id",race_id)
-                print("pred_df",pred_df)
-#             上位２着の予測スコアが同じなら賭けない
-            score_1 = pred_df['scores'].iloc[0]
-            score_2 = pred_df['scores'].iloc[1] 
-            
-#             data_cから観測できる odds は100をかけた時の ×odds だが, return_tables の オッズは, 100円をかけた時の払い戻し金額
-            odds_tmp = df_[df_[0]=='三連単'][2].values[0].replace(',','').split('br')
-            if len(odds_tmp)==1:
-                odds = int(odds_tmp[0])
-            else:
-                odds = int(odds_tmp[0])
-                odds2 = int(odds_tmp[1])
-
-            if score_1 != score_2:
-#                 当たってた時
-                try:
-                    if [int(i) for i in df_[df_[0]=='三連単'][1].values[0].replace(' ','').split('→')] == [pred_1,pred_2,pred_3]:
-                        acc_dict['三連単'] += 1
-                        profit = (bet/100)*odds
-                        return_dict['三連単'] += profit
-                except:
-                    print()
-                    print('race_id',race_id)
-            else:
-                not_bet_count += 1
-            
-        real_race_len = len(race_id_list) - not_bet_count
-        return_dict['三連単'] -= bet * real_race_len
-#         この辺のロジック同じだから, 関数でまとめたい
-        print("---------------------")
-        print("not_bet_count",not_bet_count)
-        print("三連単")
-        print("的中率 :",acc_dict['三連単'],'/',real_race_len)
-        print("的中% :",'{:.2f}'.format((acc_dict['三連単']/real_race_len)*100),'%')
-        print("収支   :",return_dict['三連単'],'円')
-    
-    def show_results_today(self , st ,race_id_list ,bet = 100):
-        acc_dict = {'単勝':0,'複勝':0,'ワイド':0}
-        return_dict = {'単勝':0,'複勝':0,'ワイド':0}
-        tansho_list = []
-        fukusho_list = []
-        wide_list =[]
-
-        for race_id in race_id_list:
-            self.pred_df = self.return_pred_table(st.data_c.loc[int(race_id)])
-#             self.return_tables.index =  self.return_tables.index.astype(int)
-            df_  = self.return_tables.loc[race_id]
-            print("-------------------")
-            print("predict")
-            pred_df = self.pred_df.loc[int(race_id)]
-            pred_df = pred_df.sort_values('scores',ascending=False)
-            print(pred_df.iloc[:3])
-            print("actual")
-            print(self.return_tables.loc[race_id])
-            pred_1 = str(pred_df['馬番'].iloc[0])
-            pred_2 = str(pred_df['馬番'].iloc[1])
+        return  pred_list,actual_rank_list,tansho_odds,fukusho_odds,umaren_odds,wide_odds,umatan_odds,sanrenpuku_odds,sanrentan_odds,wide_comb
 
 
-            if  pred_1 == df_[df_[0]=='単勝'][1].values[0]:
-                acc_dict['単勝'] += 1
-                profit = int(df_[df_[0]=='単勝'][2].values[0].replace('円','').replace(',',''))
-                return_dict['単勝'] += profit
-                acc_dict['複勝'] += 1
-                return_index = df_[df_[0]=='複勝'][1].str.split(' ').values[0].index(str(pred_1))
-                profit = int(df_[df_[0]=='複勝'][2].str.split('円').values[0][return_index].replace(',',''))
-                return_dict['複勝'] += profit 
-                tansho_list.append(race_id[-2:])
-                fukusho_list.append(race_id[-2:])
-
-            elif pred_1 in df_[df_[0]=='複勝'][1].str.split(' ')[0]:
-                acc_dict['複勝'] += 1
-                return_index = df_[df_[0]=='複勝'][1].str.split(' ').values[0].index(str(pred_1))
-                profit = int(df_[df_[0]=='複勝'][2].str.split('円').values[0][return_index].replace(',',''))
-                return_dict['複勝'] += profit 
-                fukusho_list.append(race_id[-2:])
-                
-
-            for i in range(len(df_[df_[0]=='ワイド'][1].str.split(' ')[0])//2):
-                if set([pred_1,pred_2])==set(df_[df_[0]=='ワイド'][1].str.split(' ')[0][i:i+2]):
-                    if i!=0:
-                        return_index = i-1
-                    else:
-                        return_index = i
-                    profit = int(df_[df_[0]=='ワイド'][2].str.split('円')[0][return_index].replace(',',''))
-                    return_dict['ワイド'] += profit
-                    print("profit",profit)
-                    acc_dict['ワイド'] += 1
-                    wide_list.append(race_id[-2:])
-                    break
-        
-        
-        for i, key in enumerate(acc_dict):
-            return_dict[key] -= bet * len(race_id_list)
-        
-        print("---------------------")
-        print("単勝")
-        print("的中率 :",acc_dict['単勝'],'/',len(race_id_list))
-        print("的中% :",'{:.2f}'.format(acc_dict['単勝']/len(race_id_list)*100),'%')
-        print("収支   :",return_dict['単勝'],'円')
-        print("的中レース",tansho_list)
-        print("---------------------")
-        print("複勝")
-        print("的中率 :",acc_dict['複勝'],'/',len(race_id_list))
-        print("的中% :",'{:.2f}'.format(acc_dict['複勝']/len(race_id_list)*100),'%')
-        print("収支   :",return_dict['複勝'],'円')
-        print("的中レース",fukusho_list)
-        print("---------------------")
-        print("ワイド")
-        print("的中率 :",acc_dict['ワイド'],'/',len(race_id_list))
-        print("的中% :",'{:.2f}'.format(acc_dict['ワイド']/len(race_id_list)*100),'%')
-        print("収支   :",return_dict['ワイド'],'円')
-        print("的中レース",wide_list)
-    
-    def return_pred_table(self,data_c,is_long=False):
-        # is_long って何？
-        #予測
-        if not is_long:
-            scores = pd.Series(self.model.predict(data_c.drop(['date'],axis=1)),index=data_c.index)
-        else:
-            scores = pd.Series(self.model.predict(data_c.drop(['date','rank','単勝'],axis=1)),index=data_c.index)
-        pred = data_c[['馬番']].copy()
-        pred['scores'] = scores
-        pred = pred.sort_values('scores',ascending=False)
-        return pred
-
-# 的中レースの分布を表示できるように
-
-    def show_results(self , st ,race_id_list ,bet = 100):
-        self.return_table_today(race_id_list)
-        return_tables = self.return_tables.copy()
-        acc_dict = {'単勝':0,'複勝':0,'ワイド':0}
-        return_dict = {'単勝':0,'複勝':0,'ワイド':0}
-        # target_race_dict  = {}
-        self.pred_df = self.return_pred_table(st.data_c)
-        tansho_list = []
-        fukusho_list = []
-        wide_list =[]
-
-        for race_id in race_id_list:
-            df_  = return_tables.loc[race_id]
-            print("-------------------")
-            print("predict")
-            pred_df = self.pred_df.loc[int(race_id)]
-            pred_df = pred_df.sort_values('scores',ascending=False)
-            print(pred_df.iloc[:3])
-            print("actual")
-            print(return_tables.loc[race_id])
-            pred_1 = str(pred_df['馬番'].iloc[0])
-            pred_2 = str(pred_df['馬番'].iloc[1])
-
-
-            if  pred_1 == df_[df_[0]=='単勝'][1].values[0]:
-                acc_dict['単勝'] += 1
-                profit = int(df_[df_[0]=='単勝'][2].values[0].replace('円','').replace(',',''))
-                return_dict['単勝'] += profit
-                acc_dict['複勝'] += 1
-                return_index = df_[df_[0]=='複勝'][1].str.split(' ')[0].index(str(pred_1))
-                profit = int(df_[df_[0]=='複勝'][2].str.split('円')[0][return_index].replace(',',''))
-                return_dict['複勝'] += profit 
-                tansho_list.append(race_id[-2:])
-                fukusho_list.append(race_id[-2:])
-
-            elif pred_1 in df_[df_[0]=='複勝'][1].str.split(' ')[0]:
-                acc_dict['複勝'] += 1
-                return_index = df_[df_[0]=='複勝'][1].str.split(' ')[0].index(str(pred_1))
-                profit = int(df_[df_[0]=='複勝'][2].str.split('円')[0][return_index].replace(',',''))
-                return_dict['複勝'] += profit 
-                fukusho_list.append(race_id[-2:])
-                
-
-            for i in range(len(df_[df_[0]=='ワイド'][1].str.split(' ')[0])//2):
-                if set([pred_1,pred_2])==set(df_[df_[0]=='ワイド'][1].str.split(' ')[0][i:i+2]):
-                    if i!=0:
-                        return_index = i-1
-                    else:
-                        return_index = i
-                    profit = int(df_[df_[0]=='ワイド'][2].str.split('円')[0][return_index].replace(',',''))
-                    return_dict['ワイド'] += profit
-                    print("profit",profit)
-                    acc_dict['ワイド'] += 1
-                    wide_list.append(race_id[-2:])
-                    break
-        
-        
-        for i, key in enumerate(acc_dict):
-            return_dict[key] -= bet * len(race_id_list)
-        
-        print("---------------------")
-        print("単勝")
-        print("的中率 :",acc_dict['単勝'],'/',len(race_id_list))
-        print("収支   :",return_dict['単勝'],'円')
-        print("的中レース",tansho_list)
-        print("---------------------")
-        print("複勝")
-        print("的中率 :",acc_dict['複勝'],'/',len(race_id_list))
-        print("収支   :",return_dict['複勝'],'円')
-        print("的中レース",fukusho_list)
-        print("---------------------")
-        print("ワイド")
-        print("的中率 :",acc_dict['ワイド'],'/',len(race_id_list))
-        print("収支   :",return_dict['ワイド'],'円')
-        print("的中レース",wide_list)
-
-
-
-
-
-class TodaySimulater(RankSimulater):
+class TodaySimulater(Simulater):
 
     def __init__(self,model):
         super(TodaySimulater,self).__init__(model)
         self.is_long = False
 
-
-    
-    def calc_tansho(self,data_c,race_id,odds,bet,return_tables):
-        race_id = int(race_id)
-        pred_df = self.return_pred_table(data_c.loc[race_id],is_long=self.is_long)
-        pred_df = pred_df.loc[race_id]
-        pred_df = pred_df.sort_values('scores',ascending=False)
-        pred_1 = pred_df['馬番'].iloc[0]
-        score_1 = pred_df['scores'].iloc[0]
-        score_2 = pred_df['scores'].iloc[1]
-# pred_odds と actual_rank だけ, 当日用に変えればOK
-
-        return_table = return_tables.loc[str(race_id)]
-        rank1 = int(return_table[return_table[0]=='単勝'][1].values[0])
-        tmp_odds = return_table[return_table[0]=='単勝'][2].str.replace(',','')
-        tmp_odds = tmp_odds.str.replace('円','').values[0]
-        real_odds = int(tmp_odds)/100
-
-        not_buy_reason = ''
-        profit = 0
-        # try:
-        #     rank = data_c[data_c['rank']==1].loc[race_id]['馬番']
-        # except Exception as e:
-        #     print(e)
-        #     return 0,False,False,0,not_buy_reason,-1
-            
-        is_atari = False
-        is_buy = True
-
-        if pred_1 == rank1:
-            is_atari = True
-
-            if real_odds < odds:
-                is_buy = False
-                not_buy_reason = 'low odds'
-
-#             上位２着の予測スコアが同じなら賭けない
-        if score_1==score_2:
-            is_buy = False
-            not_buy_reason = 'same score 1 and  2'
-
-
-        if is_atari:
-            if is_buy:
-                profit = real_odds*bet
-            else:
-                profit = 0
-        else:
-            if is_buy:
-                profit -= bet
-            else:
-                profit = 0
-
-        return profit, is_atari, is_buy, rank1, not_buy_reason, real_odds
-    
-    
     def return_race_result(self,data_c,race_id,return_tables):
         race_id = int(race_id)
         pred_df = self.return_pred_table(data_c.loc[race_id],is_long=self.is_long)
@@ -2322,6 +1636,7 @@ class LearnLGBM():
 
         self.model = lgb_rank
     
+    
 class Predictor(LearnLGBM):
 
 
@@ -2387,7 +1702,7 @@ class Predictor(LearnLGBM):
         st.merge_peds(self.pe.peds_vec)
         st.process_categorical(self.r.le_horse, self.r.le_jockey, self.r.data_pe)
         self.st = st
-        sl = RankSimulater(self.model)
+        sl = Simulater(self.model)
         pred_table = sl.return_pred_table(st.data_c)
         self.sl = sl
         print(pred_table)
