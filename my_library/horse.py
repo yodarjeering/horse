@@ -1198,62 +1198,37 @@ class Simulater():
         return pred
 
 #     odds以上の馬券しか買わない
-    def get_result_df(self, data_c, return_tables, kaime='tansho', is_long=True, odds=2.0, bet = 100):
+    def get_result_df(self, data_c, return_tables, is_long=True, odds=2.0, bet = 100):
         race_id_list = list(set(data_c.index))
         race_dict = {}
 
-        if kaime=='tansho':
-            
-
-            for race_id in race_id_list:
-                profit,is_atari,is_buy,actual_rank,not_buy_reason,pred_odds = self.calc_tansho(data_c,race_id,odds,bet,is_long)
-                row_list = [profit,is_atari,is_buy,actual_rank,not_buy_reason,pred_odds]
-                race_dict[race_id] = row_list
-            tansho_result = pd.DataFrame(race_dict).T
-            tansho_result.rename(columns={0:'profit',1:'is_atari',2:'is_buy',3:'actual_rank',4:'not_buy_reason',5:'pred_odds'},inplace=True)
-            return tansho_result
-
-        if kaime=='all':
-            for race_id in race_id_list:
-                pred_list,actual_rank_list,tansho_odds,fukusho_odds,umaren_odds,wide_odds,umatan_odds,sanrenpuku_odds,sanrentan_odds,wide_comb = self.return_race_result(data_c,race_id,return_tables)
-                row_list = [pred_list,actual_rank_list,tansho_odds,fukusho_odds,umaren_odds,wide_odds,umatan_odds,sanrenpuku_odds,sanrentan_odds,wide_comb]
-                race_dict[int(race_id)] = row_list
-            all_result = pd.DataFrame(race_dict).T
-            all_result.rename(columns={
-                0:'pred_list',
-                1:'actual_rank_list',
-                2:'tansho_odds',
-                3:'fukusho_odds',
-                4:'umaren_odds',
-                5:'wide_odds',
-                6:'umatan_odds',
-                7:'sanrenpuku_odds',
-                8:'sanrentan_odds',
-                9:'wide_comb'
-                },inplace=True)
-            return all_result
+        for race_id in race_id_list:
+            pred_list,actual_rank_list,tansho_odds,fukusho_odds,umaren_odds,wide_odds,umatan_odds,sanrenpuku_odds,sanrentan_odds,wide_comb,odds_list = self.return_race_result(data_c,race_id,return_tables)
+            row_list = [pred_list,actual_rank_list,tansho_odds,fukusho_odds,umaren_odds,wide_odds,umatan_odds,sanrenpuku_odds,sanrentan_odds,wide_comb,odds_list]
+            race_dict[int(race_id)] = row_list
+        all_result = pd.DataFrame(race_dict).T
+        all_result.rename(columns={
+            0:'pred_list',
+            1:'actual_rank_list',
+            2:'tansho_odds',
+            3:'fukusho_odds',
+            4:'umaren_odds',
+            5:'wide_odds',
+            6:'umatan_odds',
+            7:'sanrenpuku_odds',
+            8:'sanrentan_odds',
+            9:'wide_comb',
+            10:'odds_list'
+            },inplace=True)
+        return all_result
         
-        elif kaime=='wide':
-            pass
-        elif kaime=='wide_3_box':
-            pass
-        elif kaime=='umaren':
-            pass
-        elif kaime=='umatan':
-            pass
-        elif kaime=='sanrentan':
-            pass
-        elif kaime=='sanrenpuku':
-            pass
-        else:
-            print("No such kaime.")
 
     def return_race_result(self, data_c ,race_id, return_tables):
         race_id = int(race_id)
         pred_df = self.return_pred_table(data_c.loc[race_id],is_long=self.is_long)
         pred_df = pred_df.loc[race_id]
         pred_df = pred_df.sort_values('scores',ascending=False)
-        
+        dc = data_c.loc[race_id]
         return_table  = return_tables.loc[race_id]
         
         
@@ -1272,6 +1247,11 @@ class Simulater():
             wide_row =  return_table[return_table[0]=='ワイド']
             sanrentan_row =  return_table[return_table[0]=='三連単']
             sanrenpuku_row =  return_table[return_table[0]=='三連複']
+            
+            # odds 順番は予測した順
+            odds_list = []
+            for ub in pred_df['馬番'].tolist():
+                odds_list.append(dc[dc['馬番']==ub]['単勝'].values[0])
         
             if score_1 == score_2:
                 is_same_score =True
@@ -1401,7 +1381,7 @@ class Simulater():
             return
         
         
-        return  pred_list,actual_rank_list,tansho_odds,fukusho_odds,umaren_odds,wide_odds,umatan_odds,sanrenpuku_odds,sanrentan_odds,wide_comb
+        return  pred_list,actual_rank_list,tansho_odds,fukusho_odds,umaren_odds,wide_odds,umatan_odds,sanrenpuku_odds,sanrentan_odds,wide_comb,odds_list
 
 
 class TodaySimulater(Simulater):
@@ -1544,7 +1524,9 @@ class LearnLGBM():
     def process_pe(self,peds):
         pe = Peds(peds)
         pe.regularize_peds()
-        pe.vectorize(pe.peds_re,self.model_ft)
+        # 血統データ　カテゴリ変数処理
+        pe.categorize()
+        # pe.vectorize(pe.peds_re,self.model_ft)
         self.pe = pe
         print("pe finish")
         print("pe regularizrd")
@@ -1557,7 +1539,7 @@ class LearnLGBM():
         hr = HorseResults(horse_results)
         self.hr = hr
         r.merge_horse_results(hr)
-        r.merge_peds(self.pe.peds_vec)
+        r.merge_peds(self.pe.peds_cat)
         # r.merge_peds(pe.peds_cat)
         #カテゴリ変数の処理
         # pedsは既にカテゴリ化したdataをconcatしているので, ここでカテゴリ化せずとも良い
@@ -1569,7 +1551,7 @@ class LearnLGBM():
         peds = self.peds.copy()
         results = self.results.copy()
         horse_results = self.horse_results.copy()
-        self.learn_model_ft()
+        # self.learn_model_ft()
         self.process_pe(peds)
         self.process_hr(results,horse_results)
         
@@ -1636,7 +1618,7 @@ class LearnLGBM():
 
         self.model = lgb_rank
     
-    
+
 class Predictor(LearnLGBM):
 
 
@@ -1657,7 +1639,7 @@ class Predictor(LearnLGBM):
         self.hr = hr
         print("hr finish")
         r.merge_horse_results(hr)
-        r.merge_peds(self.pe.peds_vec)
+        r.merge_peds(self.pe.peds_cat)
         r.process_categorical()  
         self.r = r
         
@@ -1699,7 +1681,7 @@ class Predictor(LearnLGBM):
         st = ShutubaTable(data)
         st.preprocessing()
         st.merge_horse_results(self.hr)
-        st.merge_peds(self.pe.peds_vec)
+        st.merge_peds(self.pe.peds_cat)
         st.process_categorical(self.r.le_horse, self.r.le_jockey, self.r.data_pe)
         self.st = st
         sl = Simulater(self.model)
@@ -1714,10 +1696,9 @@ class Predictor(LearnLGBM):
         st = ShutubaTable(self.data)
         st.preprocessing()
         st.merge_horse_results(self.hr)
-        st.merge_peds(self.pe.peds_vec)
+        st.merge_peds(self.pe.peds_cat)
         st.process_categorical(self.r.le_horse, self.r.le_jockey, self.r.data_pe)
         sl = RankSimulater(self.model)
         sl.return_table_today(self.race_id_list)
         sl.show_results_today(st ,self.race_id_list)
-
 
