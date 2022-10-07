@@ -21,7 +21,8 @@ from sklearn.metrics import r2_score
 from sklearn.metrics import roc_auc_score
 from scipy.special import comb
 from itertools import permutations
-import fasttext as ft
+import pickle
+# import fasttext as ft
 
 place_dict = {
     '札幌':'01',  '函館':'02',  '福島':'03',  '新潟':'04',  '東京':'05', 
