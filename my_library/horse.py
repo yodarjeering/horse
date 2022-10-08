@@ -2815,4 +2815,3 @@ class Predictor(LearnLGBM):
         sl.return_table_today(self.race_id_list)
         sl.show_results_today(st ,self.race_id_list)
 
-
