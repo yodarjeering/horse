@@ -1703,3 +1703,734 @@ class Predictor(LearnLGBM):
         sl.return_table_today(self.race_id_list)
         sl.show_results_today(st ,self.race_id_list)
 
+
+import lightgbm as lgb
+
+
+
+class Simulater():
+    
+    def __init__(self, model):
+        
+        self.model = model
+        self.return_tables = None
+        self.pred_df = None
+        self.is_long = True
+    
+
+    #     当日のデータでシミュレートするとあかん
+    def return_table(self, race_id_list):
+        return_tables = Return.scrape(race_id_list)
+        return_tables.rename(columns={'0':0,'1':1,'2':2,'3':3},inplace=True)
+        self.return_tables = return_tables
+        return
+    
+    
+    def return_table_today(self,race_id_list):
+        return_tables = {}
+        for race_id in tqdm(race_id_list):
+            try:
+                url = 'https://race.netkeiba.com/race/result.html?race_id='+race_id+'&amp;rf=race_submenu'
+                dfs = pd.read_html(url)
+                df = pd.concat([dfs[1], dfs[2]])
+                df.index = [race_id] * len(df)
+                return_tables[race_id] = df
+                time.sleep(0.5)
+            except IndexError:
+                continue
+            except Exception as e:
+                print(e)
+                break
+            except:
+                break
+            #pd.DataFrame型にして一つのデータにまとめる
+        return_tables_df = pd.concat([return_tables[key] for key in return_tables])
+        # return_tables_df.index = return_tables_df.index.astype(int)
+        self.return_tables = return_tables_df
+    
+    
+    def return_pred_table(self,data_c,is_long=False):
+        # is_long って何？
+        #予測
+        if not is_long:
+            scores = pd.Series(self.model.predict(data_c.drop(['date'],axis=1)),index=data_c.index)
+        else:
+            scores = pd.Series(self.model.predict(data_c.drop(['date','rank','単勝'],axis=1)),index=data_c.index)
+        pred = data_c[['馬番']].copy()
+        pred['scores'] = scores
+        pred = pred.sort_values('scores',ascending=False)
+        return pred
+
+#     odds以上の馬券しか買わない
+    def get_result_df(self, data_c, return_tables, is_long=True, odds=2.0, bet = 100):
+        race_id_list = list(set(data_c.index))
+        race_dict = {}
+
+        for race_id in race_id_list:
+            pred_list,actual_rank_list,tansho_odds,fukusho_odds,umaren_odds,wide_odds,umatan_odds,sanrenpuku_odds,sanrentan_odds,wide_comb,odds_list = self.return_race_result(data_c,race_id,return_tables)
+            row_list = [pred_list,actual_rank_list,tansho_odds,fukusho_odds,umaren_odds,wide_odds,umatan_odds,sanrenpuku_odds,sanrentan_odds,wide_comb,odds_list]
+            race_dict[int(race_id)] = row_list
+        all_result = pd.DataFrame(race_dict).T
+        all_result.rename(columns={
+            0:'pred_list',
+            1:'actual_rank_list',
+            2:'tansho_odds',
+            3:'fukusho_odds',
+            4:'umaren_odds',
+            5:'wide_odds',
+            6:'umatan_odds',
+            7:'sanrenpuku_odds',
+            8:'sanrentan_odds',
+            9:'wide_comb',
+            10:'odds_list'
+            },inplace=True)
+        return all_result
+        
+
+    def return_race_result(self, data_c ,race_id, return_tables):
+        race_id = race_id
+        pred_df = self.return_pred_table(data_c.loc[race_id],is_long=self.is_long)
+        pred_df = pred_df.loc[race_id]
+        pred_df = pred_df.sort_values('scores',ascending=False)
+        dc = data_c.loc[race_id]
+        return_table  = return_tables.loc[race_id]
+        
+        
+        pred_list = [int(pred_df['馬番'].iloc[i]) for i in range(len(pred_df))]
+
+        score_1 = pred_df['scores'].iloc[0]
+        score_2 = pred_df['scores'].iloc[1]
+        is_same_score = False
+
+        try:
+        
+            tansho_row = return_table[return_table[0]=='単勝']
+            fukusho_row = return_table[return_table[0]=='複勝']
+            umaren_row =  return_table[return_table[0]=='馬連']
+            umatan_row =  return_table[return_table[0]=='馬単']
+            wide_row =  return_table[return_table[0]=='ワイド']
+            sanrentan_row =  return_table[return_table[0]=='三連単']
+            sanrenpuku_row =  return_table[return_table[0]=='三連複']
+            
+            # odds 順番は予測した順
+            odds_list = []
+            for ub in pred_df['馬番'].tolist():
+                odds_list.append(dc[dc['馬番']==ub]['単勝'].values[0])
+        
+            if score_1 == score_2:
+                is_same_score =True
+                
+            # １着が同着    
+            if int(tansho_row[1].str.count('br'))==1:
+                actual_tmp0 = sanrentan_row[1].str.split('br').values[0][0]
+                actual_tmp1 = sanrentan_row[1].str.split('br').values[0][1]
+                actual_rank_list0 = list(map(int,actual_tmp0.split('→')))
+                actual_rank_list1 = list(map(int,actual_tmp1.split('→')))
+                actual_rank_list = [actual_rank_list0,actual_rank_list1]
+                
+                tansho_odds_list = tansho_row[2].str.split('br').values[0][0:3]
+                tansho_odds_list = [i for i in tansho_odds_list if i!='']
+                tansho_odds = list(map(lambda x: int(x.replace(',',''))/100 ,tansho_odds_list))
+                
+                umatan_odds_list = umatan_row[2].str.split('br').values[0][0:3]
+                umatan_odds_list = [i for i in umatan_odds_list if i!='']
+                umatan_odds = list(map(lambda x: int(x.replace(',',''))/100 ,umatan_odds_list))
+                
+                sanrentan_odds_list = sanrentan_row[2].str.split('br').values[0][0:3]
+                sanrentan_odds_list = [i for i in sanrentan_odds_list if i!='']
+                sanrentan_odds = list(map(lambda x: int(x.replace(',',''))/100 ,sanrentan_odds_list))
+        
+                umaren_odds = int(umaren_row[2])/100
+                sanrenpuku_odds = int(sanrenpuku_row[2])/100
+                fukusho_odds_list = fukusho_row[2].str.split('br').values[0][0:3]
+                fukusho_odds_list = [i for i in fukusho_odds_list if i!='']
+                fukusho_odds = list(map(lambda x: int(x.replace(',',''))/100 , fukusho_odds_list))
+                
+                wide_odds = list(map(lambda x: int(x.replace(',',''))/100 , wide_row[2].str.split('br').values[0][0:3]))
+                
+                tmp_list = list(map(lambda x:x.replace(' - ',' '),wide_row[1].str.split('br').values[0][0:3]))
+                wide_comb = []
+                for tl in tmp_list:
+                    pair_list = list(map(lambda x: int(x),tl.split(' ')))
+                    wide_comb.append(pair_list)
+                    
+            # S2
+            elif int(umaren_row[1].str.count('br'))==1:
+                actual_tmp0 = sanrentan_row[1].str.split('br').values[0][0]
+                actual_tmp1 = sanrentan_row[1].str.split('br').values[0][1]
+                actual_rank_list0 = list(map(int,actual_tmp0.split('→')))
+                actual_rank_list1 = list(map(int,actual_tmp1.split('→')))
+                actual_rank_list = [actual_rank_list0,actual_rank_list1]
+                
+                tansho_odds = int(tansho_row[2])/100
+                fukusho_odds_list = fukusho_row[2].str.split('br').values[0][0:3]
+                fukusho_odds_list = [i for i in fukusho_odds_list if i!='']
+                fukusho_odds = list(map(lambda x: int(x.replace(',',''))/100 , fukusho_odds_list))
+                
+                umaren_odds_list = umaren_row[2].str.split('br').values[0][0:3]
+                umaren_odds_list = [i for i in umaren_odds_list if i!='']
+                umaren_odds = list(map(lambda x: int(x.replace(',',''))/100 ,umaren_odds_list))
+                
+                umatan_odds_list = umatan_row[2].str.split('br').values[0][0:3]
+                umatan_odds_list = [i for i in umatan_odds_list if i!='']
+                umatan_odds = list(map(lambda x: int(x.replace(',',''))/100 ,umatan_odds_list))
+                
+                wide_odds = list(map(lambda x: int(x.replace(',',''))/100 , wide_row[2].str.split('br').values[0][0:3]))
+                
+                tmp_list = list(map(lambda x:x.replace(' - ',' '),wide_row[1].str.split('br').values[0][0:3]))
+                wide_comb = []
+                for tl in tmp_list:
+                    pair_list = list(map(lambda x: int(x),tl.split(' ')))
+                    wide_comb.append(pair_list)
+                    
+                sanrenpuku_odds = int(sanrenpuku_row[2])/100
+                sanrentan_odds_list = sanrentan_row[2].str.split('br').values[0][0:3]
+                sanrentan_odds_list = [i for i in sanrentan_odds_list if i!='']
+                sanrentan_odds = list(map(lambda x: int(x.replace(',',''))/100 ,sanrentan_odds_list))
+            
+            # S3
+            elif int(sanrenpuku_row[1].str.count('br'))==1:
+                actual_tmp0 = sanrentan_row[1].str.split('br').values[0][0]
+                actual_tmp1 = sanrentan_row[1].str.split('br').values[0][1]
+                actual_rank_list0 = list(map(int,actual_tmp0.split('→')))
+                actual_rank_list1 = list(map(int,actual_tmp1.split('→')))
+                actual_rank_list = [actual_rank_list0,actual_rank_list1]
+                
+                tansho_odds = int(tansho_row[2])/100
+                fukusho_odds_list = fukusho_row[2].str.split('br').values[0][0:4]
+                fukusho_odds_list = [i for i in fukusho_odds_list if i!='']
+                fukusho_odds = list(map(lambda x: int(x.replace(',',''))/100 , fukusho_odds_list))
+                umaren_odds = int(umaren_row[2])/100
+                umatan_odds = int(umatan_row[2])/100
+                
+                wide_odds = list(map(lambda x: int(x.replace(',',''))/100 , wide_row[2].str.split('br').values[0][0:5]))
+                tmp_list = list(map(lambda x:x.replace(' - ',' '),wide_row[1].str.split('br').values[0][0:5]))
+                wide_comb = []
+                for tl in tmp_list:
+                    pair_list = list(map(lambda x: int(x),tl.split(' ')))
+                    wide_comb.append(pair_list)
+                
+                sanrenpuku_odds_list = sanrenpuku_row[2].str.split('br').values[0][0:3]
+                sanrenpuku_odds_list = [i for i in sanrenpuku_odds_list if i!='']
+                sanrenpuku_odds = list(map(lambda x: int(x.replace(',',''))/100 ,sanrenpuku_odds_list))
+                
+                sanrentan_odds_list = sanrentan_row[2].str.split('br').values[0][0:3]
+                sanrentan_odds_list = [i for i in sanrentan_odds_list if i!='']
+                sanrentan_odds = list(map(lambda x: int(x.replace(',',''))/100 ,sanrentan_odds_list))
+            else:
+                actual_rank_list = list(map(int,sanrentan_row[1].str.split('→').values[0]))
+                
+                tansho_odds = int(tansho_row[2])/100
+                umaren_odds = int(umaren_row[2])/100
+                sanrenpuku_odds = int(sanrenpuku_row[2])/100
+                fukusho_odds_list = fukusho_row[2].str.split('br').values[0][0:3]
+                fukusho_odds_list = [i for i in fukusho_odds_list if i!='']
+                fukusho_odds = list(map(lambda x: int(x.replace(',',''))/100 , fukusho_odds_list))
+                
+                wide_odds = list(map(lambda x: int(x.replace(',',''))/100 , wide_row[2].str.split('br').values[0][0:3]))
+                
+                tmp_list = list(map(lambda x:x.replace(' - ',' '),wide_row[1].str.split('br').values[0][0:3]))
+                wide_comb = []
+                for tl in tmp_list:
+                    pair_list = list(map(lambda x: int(x),tl.split(' ')))
+                    wide_comb.append(pair_list)
+                
+                umatan_odds = int(umatan_row[2])/100
+                
+                sanrentan_odds = int(sanrentan_row[2])/100
+                
+        except Exception as e:
+            print(e)
+            print(race_id)
+            return
+        
+        
+        return  pred_list,actual_rank_list,tansho_odds,fukusho_odds,umaren_odds,wide_odds,umatan_odds,sanrenpuku_odds,sanrentan_odds,wide_comb,odds_list
+
+
+class TodaySimulater(Simulater):
+
+    def __init__(self,model):
+        super(TodaySimulater,self).__init__(model)
+        self.is_long = False
+
+    def return_race_result(self,data_c,race_id,return_tables):
+        race_id = int(race_id)
+        pred_df = self.return_pred_table(data_c.loc[race_id],is_long=self.is_long)
+        return_table  = return_tables.loc[str(race_id)]
+        pred_df = pred_df.loc[race_id]
+        pred_df = pred_df.sort_values('scores',ascending=False)
+        pred_list = [int(pred_df['馬番'].iloc[i]) for i in range(len(pred_df))]
+
+        score_1 = pred_df['scores'].iloc[0]
+        score_2 = pred_df['scores'].iloc[1]
+        is_same_score = False
+
+        
+        tansho_row = return_table[return_table[0]=='単勝']
+        fukusho_row = return_table[return_table[0]=='複勝']
+        umaren_row =  return_table[return_table[0]=='馬連']
+        umatan_row =  return_table[return_table[0]=='馬単']
+        wide_row =  return_table[return_table[0]=='ワイド']
+        sanrentan_row =  return_table[return_table[0]=='3連単']
+        sanrenpuku_row =  return_table[return_table[0]=='3連複']
+        
+        actual_rank_list = list(map(int,sanrentan_row[1].str.split(' ').values[0]))
+        
+        odds_tmp =umaren_row[2].str.replace(',','')
+        umaren_odds = int(odds_tmp.str.replace('円','').values[0])/100
+        
+        odds_tmp = tansho_row[2].str.replace(',','')
+        tansho_odds = int(odds_tmp.str.replace('円','').values[0])/100
+        
+        odds_tmp = umatan_row[2].str.replace(',','')
+        umatan_odds = int(odds_tmp.str.replace('円','').values[0])/100
+        
+        odds_tmp = sanrenpuku_row[2].str.replace(',','')
+        sanrenpuku_odds = int(odds_tmp.str.replace('円','').values[0])/100
+        
+        odds_tmp = sanrentan_row[2].str.replace(',','')
+        sanrentan_odds = int(odds_tmp.str.replace('円','').values[0])/100
+        
+        fukusho_odds_list = fukusho_row[2].str.split('円').values[0][0:3]
+        fukusho_odds_list = [i for i in fukusho_odds_list if i!='']
+        fukusho_odds = list(map(lambda x: int(x.replace(',',''))/100 , fukusho_odds_list))
+        wide_odds = list(map(lambda x: int(x.replace(',',''))/100 , wide_row[2].str.split('円').values[0][0:3]))
+        
+        tmp_list = list(map(int,wide_row[1].str.split(' ').tolist()[0]))
+        wide_comb = []
+        for i in range(0,len(tmp_list),2):
+            wide_comb.append(tmp_list[i:i+2])
+        
+        if score_1 == score_2:
+            is_same_score =True
+        
+        
+        return  pred_list,actual_rank_list,tansho_odds,fukusho_odds,umaren_odds,wide_odds,umatan_odds,sanrenpuku_odds,sanrentan_odds,wide_comb
+
+    def get_result_df(self, data_c, return_tables, race_id_list, kaime='tansho', odds=2, bet=100):
+        race_dict = {}
+
+        if kaime=='tansho':
+            for race_id in race_id_list:
+                profit,is_atari,is_buy,actual_rank,not_buy_reason,pred_odds = self.calc_tansho(data_c,race_id,odds,bet,return_tables)
+                row_list = [profit,is_atari,is_buy,actual_rank,not_buy_reason,pred_odds]
+                race_dict[int(race_id)] = row_list
+            tansho_result = pd.DataFrame(race_dict).T
+            tansho_result.rename(columns={0:'profit',1:'is_atari',2:'is_buy',3:'actual_rank',4:'not_buy_reason',5:'real_odds'},inplace=True)
+            return tansho_result
+        
+        if kaime=='all':
+            for race_id in race_id_list:
+                pred_list,actual_rank_list,tansho_odds,fukusho_odds,umaren_odds,wide_odds,umatan_odds,sanrenpuku_odds,sanrentan_odds,wide_comb = self.return_race_result(data_c,race_id,return_tables)
+                row_list = [pred_list,actual_rank_list,tansho_odds,fukusho_odds,umaren_odds,wide_odds,umatan_odds,sanrenpuku_odds,sanrentan_odds,wide_comb]
+                race_dict[int(race_id)] = row_list
+            all_result = pd.DataFrame(race_dict).T
+            all_result.rename(columns={
+                0:'pred_list',
+                1:'actual_rank_list',
+                2:'tansho_odds',
+                3:'fukusho_odds',
+                4:'umaren_odds',
+                5:'wide_odds',
+                6:'umatan_odds',
+                7:'sanrenpuku_odds',
+                8:'sanrentan_odds',
+                9:'wide_comb'
+                },inplace=True)
+            return all_result
+
+
+class LearnLGBM():
+    
+
+    def __init__(self,peds,results,horse_results):
+        self.model = None
+        self.model_ft = None
+        self.date = '2022/12/31'
+        self.pe = None
+        self.r = None
+        self.horse_results = None
+        self.peds = peds
+        self.results = results
+        self.horse_results = horse_results
+        self.x_train = None
+        self.x_test = None
+        self.y_train = None
+        self.y_test = None
+        self.path_ft = '/Users/Owner/Desktop/Horse/horse/peds_ft.txt'
+
+        self.lgbm_params = {
+                'metric': 'ndcg',
+                'objective': 'lambdarank',
+                'ndcg_eval_at': [1,2,3],
+                'boosting_type': 'gbdt',
+                'random_state': 777,
+                'lambdarank_truncation_level': 10,
+                'learning_rate': 0.02273417953255777,
+                'n_estimators': 97,
+                'num_leaves': 42,
+                'force_col_wise':True
+            }
+
+
+
+    def learn_model_ft(self,minn=2,maxn=14):
+        path_ft = self.path_ft
+        model_ft = ft.train_unsupervised(path_ft,dim=62,minn=minn,maxn=maxn)
+        self.model_ft = model_ft
+
+
+    def get_model_ft(self):
+        return self.model_ft
+    
+
+    def process_pe(self,peds):
+        pe = Peds(peds)
+        pe.regularize_peds()
+        # 血統データ　カテゴリ変数処理
+        pe.categorize()
+        # pe.vectorize(pe.peds_re,self.model_ft)
+        self.pe = pe
+        print("pe finish")
+        print("pe regularizrd")
+
+
+    def process_hr(self,results,horse_results):
+        r = Results(results)
+        r.preprocessing()
+        #馬の過去成績データ追加
+        hr = HorseResults(horse_results)
+        self.hr = hr
+        r.merge_horse_results(hr)
+        r.merge_peds(self.pe.peds_cat)
+        # r.merge_peds(pe.peds_cat)
+        #カテゴリ変数の処理
+        # pedsは既にカテゴリ化したdataをconcatしているので, ここでカテゴリ化せずとも良い
+        r.process_categorical()
+        self.r = r
+
+
+    def process_data(self):
+        peds = self.peds.copy()
+        results = self.results.copy()
+        horse_results = self.horse_results.copy()
+        # self.learn_model_ft()
+        self.process_pe(peds)
+        self.process_hr(results,horse_results)
+        
+        
+    def get_train_data(self,test_size=0.2):
+        self.process_data()
+        train, test = split_data(self.r.data_c.fillna(0),test_size=test_size,rank_learning=False)
+        x_train = train.drop(['rank', 'date','単勝'], axis=1)
+        y_train = train['rank']
+        x_test = test.drop(['rank', 'date','単勝'], axis=1)
+        y_test = test['rank']
+        train_query = x_train.groupby(x_train.index).size()
+        test_query = x_test.groupby(x_test.index).size()
+        train = lgb.Dataset(x_train, y_train, group=train_query)
+        test = lgb.Dataset(x_test, y_test, reference=train, group=test_query)
+        self.x_train = x_train
+        self.x_test = x_test
+        self.y_train = y_train
+        self.y_test = y_test
+        return train, test
+
+    
+    def get_train_data2(self):
+        x_train = self.x_train
+        x_test = self.x_test
+        y_train = self.y_train
+        y_test = self.y_test
+        train_query = x_train.groupby(x_train.index).size()
+        test_query = x_test.groupby(x_test.index).size()
+        train = lgb.Dataset(x_train, y_train, group=train_query)
+        test = lgb.Dataset(x_test, y_test, reference=train, group=test_query)
+        return train, test
+
+
+    def get_train_data3(featured_data,test_rate=1.0,is_rus=False):
+        train,test = split_data(feature_enginnering.featured_data)
+        x_train,y_train,_,_ = make_data(train,test_rate=test_rate,is_rus=False)
+        x_test,y_test,_,_ = make_data(test,test_rate=test_rate,is_rus=False)
+
+        train_query = x_train.groupby(x_train.index).size()
+        test_query = x_test.groupby(x_test.index).size()
+        train = lgb.Dataset(x_train, y_train, group=train_query)
+        test = lgb.Dataset(x_test, y_test, reference=train, group=test_query)
+        return train, test
+
+
+    def learn_lgb(self,lgbm_params=None,test_size=0.2):
+        if lgbm_params==None:
+            lgbm_params = self.lgbm_params
+        
+        train, test = self.get_train_data(test_size=test_size)
+        lgb_rank = lgb.train(
+                lgbm_params,
+                train,
+                # valid_sets=test,
+                num_boost_round=100,
+                valid_names=['train'],
+                # early_stopping_rounds=20,
+            )
+
+        self.model = lgb_rank
+
+# train data を与えて学習させるのが learn_lgb2
+    def learn_lgb2(self,train,lgbm_params=None):
+        if lgbm_params==None:
+            lgbm_params = self.lgbm_params
+        
+        lgb_rank = lgb.train(
+                lgbm_params,
+                train,
+                # valid_sets=test,
+                num_boost_round=100,
+                valid_names=['train'],
+                # early_stopping_rounds=20,
+            )
+
+        self.model = lgb_rank
+    
+def split_data(df, test_size=0.2, rank_learning=True):
+    """
+    データを学習データと, 訓練データに分ける関数
+    """
+    df_ = df.copy()
+    if not rank_learning:
+        df_['rank'] = df_['rank'].map(lambda x:1 if x<4 else 0)
+    sorted_id_list = df_.sort_values("date").index.unique()
+    train_id_list = sorted_id_list[: round(len(sorted_id_list) * (1 - test_size))]
+    test_id_list = sorted_id_list[round(len(sorted_id_list) * (1 - test_size)) :]
+    train = df_.loc[train_id_list]#.drop(['date'], axis=1)
+    test = df_.loc[test_id_list]#.drop(['date'], axis=1)
+    return train, test
+
+def make_data(data_,test_rate=0.8,is_rus=True):
+    x_ = data_.drop(['rank','date','単勝'],axis=1)
+    y_ = data_['rank']
+
+    test_rate = int(test_rate*len(x_))
+    x_train, x_test = x_.iloc[:test_rate],x_.iloc[test_rate:]
+    y_train, y_test = y_.iloc[:test_rate],y_.iloc[test_rate:]
+    if is_rus:
+        rus = RandomUnderSampler(random_state=0)
+        x_resampled, y_resampled = rus.fit_resample(x_train, y_train)
+        return x_resampled, y_resampled, x_test, y_test
+    else:
+        return x_train,y_train,x_test,y_test
+
+def calc_tansho(all_results,odds_alpha=2,bet=100,is_today=False):
+    length = len(all_results)
+    tekichu = 0
+    profit = 0
+    bet = 100
+    race_hit_dist = {'{}'.format(str(i).zfill(2)):0 for i in range(1,13)}
+
+# 将来的にここだけ関数化
+# ----------------------------
+    for race_id in all_results.index:
+
+#**************
+        is_particular_race = True
+        # if str(race_id)[-2:]=='01' or str(race_id)[-2:]=='02' or str(race_id)[-2:]=='03':is_particular_race = True
+#***************
+        if is_particular_race:
+            is_buy = False
+            ar = all_results.loc[race_id]
+            pred_list = ar['pred_list']
+            actual_list = ar['actual_rank_list']
+            tansho_odds = ar['tansho_odds']
+            pred_odds = ar['odds_list'][0]
+
+            if not is_today:
+                
+                if pred_odds>=odds_alpha:
+                    profit -= bet
+                else:
+                    is_buy=True
+            else:
+                profit -= bet*length
+                
+            if pred_list[0]==actual_list[0] and is_buy:
+                tekichu+=1
+                profit += bet*tansho_odds
+                race_hit_dist[str(race_id)[-2:]] += 1
+    # -----------------------------------
+
+    print('的中率 {0}'.format(tekichu/length))
+    print("収益   {0} 円".format(profit))
+    print('race dist',race_hit_dist)
+    
+def calc_fukusho(all_results,odds_alpha=2,bet=100,is_today=False):
+    length = len(all_results)
+    tekichu = 0
+    profit = 0
+    bet = 100
+    race_hit_dist = {'{}'.format(str(i).zfill(2)):0 for i in range(1,13)}
+    # 何点買うか決める変数
+    num_kai = 3
+    fukusho_ken = 3
+
+# 将来的にここだけ関数化
+# ----------------------------
+    for race_id in all_results.index:
+
+#**************
+        is_particular_race = False
+        if str(race_id)[-2:]=='01':is_particular_race = True
+            # or str(race_id)[-2:]=='02' or str(race_id)[-2:]=='03':is_particular_race = True
+#***************
+        if is_particular_race:
+            is_buy = False
+            ar = all_results.loc[race_id]
+            pred_list = ar['pred_list']
+            actual_list = ar['actual_rank_list']
+            tansho_odds = ar['tansho_odds']
+            fukusho_odds = ar['fukusho_odds']
+
+            if not is_today:
+                pred_odds = ar['odds_list'][0]
+            
+            if not is_today:
+                if pred_odds>=odds_alpha:
+                    profit -= bet
+                    is_buy = True
+            else:
+                profit -= bet
+                is_buy= True
+            
+
+            if len(fukusho_odds)==2:
+                fukusho_ken = 2
+
+            if pred_list[0] in actual_list[0:fukusho_ken] and is_buy:
+
+                tekichu_index = actual_list[0:fukusho_ken].index(pred_list[0])
+                tekichu+=1
+                profit += bet*fukusho_odds[tekichu_index]
+                race_hit_dist[str(race_id)[-2:]] += 1
+
+    # -----------------------------------
+
+    print('的中率 {0}'.format(tekichu/length))
+    print("収益   {0} 円".format(profit))
+    print('race dist',race_hit_dist)
+    
+
+def calc_wide(all_results,odds_alpha=2.0,bet=100,is_today=False):
+    length = len(all_results)
+    tekichu = 0
+    profit = 0
+    bet = 100
+    race_hit_dist = {'{}'.format(str(i).zfill(2)):0 for i in range(1,13)}
+    
+    # 将来的にここだけ関数化
+# ----------------------------
+    for race_id in all_results.index:
+        is_buy = True
+        ar = all_results.loc[race_id]
+        pred_list = ar['pred_list']
+        wide_comb = ar['wide_comb']
+        actual_list = ar['actual_rank_list']
+        wide_odds = ar['wide_odds']
+        pred_odds = ar['odds_list'][0]
+        
+        if not is_today:
+            if pred_odds>=odds_alpha:
+                profit -= bet
+            else:
+                is_buy=False
+
+        else:
+            profit -= bet*length
+            
+        if sorted(pred_list[0:2]) in wide_comb and is_buy:
+            tekichu_index = wide_comb.index(sorted(pred_list[0:2]))
+            tekichu+=1
+            profit += bet*wide_odds[tekichu_index]
+            race_hit_dist[str(race_id)[-2:]] += 1
+
+# -----------------------------------
+
+    print('的中率 {0}'.format(tekichu/length))
+    print("収益   {0} 円".format(profit))
+    print('race dist',race_hit_dist)
+
+def calc_umaren(all_results,odds_alpha=2.0,bet=100,is_today=False):
+    length = len(all_results)
+    tekichu = 0
+    profit = 0
+    bet = 100
+    race_hit_dist = {'{}'.format(str(i).zfill(2)):0 for i in range(1,13)}
+    
+    # 将来的にここだけ関数化
+# ----------------------------
+    for race_id in all_results.index:
+        is_buy = True
+        ar = all_results.loc[race_id]
+        pred_list = sorted(ar['pred_list'][0:2])
+        actual_list = sorted(ar['actual_rank_list'][0:2])
+        umaren_odds = ar['umaren_odds']
+        pred_odds = ar['odds_list'][0]
+        
+        if not is_today:
+            if pred_odds>=odds_alpha:
+                profit -= bet
+            else:
+                is_buy=False
+
+        else:
+            profit -= bet*length
+            
+        if  pred_list == actual_list and is_buy:
+            tekichu+=1
+            profit += bet*umaren_odds
+            race_hit_dist[str(race_id)[-2:]] += 1
+
+# -----------------------------------
+
+    print('的中率 {0}'.format(tekichu/length))
+    print("収益   {0} 円".format(profit))
+    print('race dist',race_hit_dist)
+
+def calc_umatan(all_results,odds_alpha=2.0,bet=100,is_today=False):
+    length = len(all_results)
+    tekichu = 0
+    profit = 0
+    bet = 100
+    race_hit_dist = {'{}'.format(str(i).zfill(2)):0 for i in range(1,13)}
+    
+    # 将来的にここだけ関数化
+# ----------------------------
+    for race_id in all_results.index:
+        is_buy = True
+        ar = all_results.loc[race_id]
+        pred_list = ar['pred_list'][0:2]
+        actual_list = ar['actual_rank_list'][0:2]
+        umatan_odds = ar['umatan_odds']
+        pred_odds = ar['odds_list'][0]
+        
+        if not is_today:
+            if pred_odds>=odds_alpha:
+                profit -= bet
+            else:
+                is_buy=False
+
+        else:
+            profit -= bet*length
+            
+        if  pred_list == actual_list and is_buy:
+            tekichu+=1
+            profit += bet*umatan_odds
+            race_hit_dist[str(race_id)[-2:]] += 1
+
+# -----------------------------------
+
+    print('的中率 {0}'.format(tekichu/length))
+    print("収益   {0} 円".format(profit))
+    print('race dist',race_hit_dist)
+
+    
