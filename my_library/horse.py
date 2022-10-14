@@ -2433,4 +2433,79 @@ def calc_umatan(all_results,odds_alpha=2.0,bet=100,is_today=False):
     print("収益   {0} 円".format(profit))
     print('race dist',race_hit_dist)
 
+
+def calc_sanrenpuku(all_results,odds_alpha=2.0,bet=100,is_today=False):
+    length = len(all_results)
+    tekichu = 0
+    profit = 0
+    bet = 100
+    race_hit_dist = {'{}'.format(str(i).zfill(2)):0 for i in range(1,13)}
     
+    # 将来的にここだけ関数化
+# ----------------------------
+    for race_id in all_results.index:
+        is_buy = True
+        ar = all_results.loc[race_id]
+        pred_list = sorted(ar['pred_list'][0:3])
+        actual_list = sorted(ar['actual_rank_list'][0:3])
+        sanrenpuku_odds = ar['sanrenpuku_odds']
+        pred_odds = ar['odds_list'][0]
+        
+        if not is_today:
+            if pred_odds>=odds_alpha:
+                profit -= bet
+            else:
+                is_buy=False
+
+        else:
+            profit -= bet*length
+            
+        if pred_list == actual_list and is_buy:
+            tekichu+=1
+            profit += bet*sanrenpuku_odds
+            race_hit_dist[str(race_id)[-2:]] += 1
+
+# -----------------------------------
+
+    print('的中率 {0}'.format(tekichu/length))
+    print("収益   {0} 円".format(profit))
+    print('race dist',race_hit_dist)
+
+
+def calc_sanrentan(all_results,odds_alpha=2.0,bet=100,is_today=False):
+    length = len(all_results)
+    tekichu = 0
+    profit = 0
+    bet = 100
+    race_hit_dist = {'{}'.format(str(i).zfill(2)):0 for i in range(1,13)}
+    
+    # 将来的にここだけ関数化
+# ----------------------------
+    for race_id in all_results.index:
+        is_buy = True
+        ar = all_results.loc[race_id]
+        pred_list = ar['pred_list'][0:3]
+        actual_list = ar['actual_rank_list'][0:3]
+        sanrentan_odds = ar['sanrentan_odds']
+        pred_odds = ar['odds_list'][0]
+        
+        if not is_today:
+            if pred_odds>=odds_alpha:
+                profit -= bet
+            else:
+                is_buy=False
+
+        else:
+            profit -= bet*length
+            
+        if pred_list == actual_list and is_buy:
+            tekichu+=1
+            profit += bet*sanrentan_odds
+            race_hit_dist[str(race_id)[-2:]] += 1
+
+# -----------------------------------
+
+    print('的中率 {0}'.format(tekichu/length))
+    print("収益   {0} 円".format(profit))
+    print('race dist',race_hit_dist)
+
